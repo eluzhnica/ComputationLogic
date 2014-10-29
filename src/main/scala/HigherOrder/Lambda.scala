@@ -65,29 +65,45 @@ case class Var(name: String) extends Formula {
 
 case class Apply(pred: Formula, form: Formula) extends Formula {
 
-  //  def checkVariableTypeMatch(variable : Var) = pred.checkVariableTypeMatch(variable) && form.checkVariableTypeMatch(variable)
   def free = form.free
-
   def bound = form.bound
-
   def rename(variable: Var, renamed: Var) = Apply(pred.rename(variable, renamed), form.rename(variable, renamed))
-
   override def toString = "("+pred.toString +")("+ form.toString +")"
 }
 
 //maybe removing the type from variable
 case class Lambda(variable: Var, varTpe: Type, form: Formula) extends Formula {
-  //  def checkVariableTypeMatch(vark : Var)= {
-  //    if(variable.name == vark.name) (variable.tc == vark.tc) && form.checkVariableTypeMatch(vark) else form.checkVariableTypeMatch(vark)
-  //  }
   variable.inftype = varTpe
+  variableBind(this)
+
+  private def variableBind(form : Lambda) = {
+
+    def bindVariable(form: Formula, vartype : Var): Unit = {
+      form match {
+        case Apply(pred, formula) => {
+          bindVariable(pred, vartype)
+          bindVariable(formula, vartype)
+        }
+        case Lambda(variable, tpe, body) => {
+          if(variable.name != vartype.name) {
+            bindVariable(body, vartype)
+          }
+        }
+        case t: Var => {
+          if (vartype.name == t.name) {
+            t.inftype = vartype.inftype
+          }
+        }
+        case c: Const =>
+      }
+    }
+
+    bindVariable(form.form, form.variable)
+  }
 
   def free = form.free
-
   def bound = variable :: form.bound
-
   def rename(variable: Var, renamed: Var) = if (variable == this.variable) Lambda(variable, varTpe, form.rename(variable, renamed)) else Lambda(this.variable, varTpe, form)
-
   override def toString = "(λ"+variable.toString+"."+form.toString +")"
 }
 
@@ -165,29 +181,8 @@ object LambdaManipulations{
   }
 
 
-  //initializes the inferred type of the variables
-  def bindVariableType(form: Formula, types: mutable.HashMap[Var, Type]): Unit = {
-    form match {
-      case Apply(pred, formula) => {
-        bindVariableType(pred, types)
-        bindVariableType(formula, types)
-      }
-      case Lambda(variable, tpe, body) => {
-        types(variable) = tpe
-        bindVariableType(body, types)
-      }
-      case t: Var => {
-        if (types contains t) {
-          t.inftype = types(t)
-        }
-      }
-      case c : Const =>
-    }
-  }
 
   def getType(form: Formula): Type = {
-    bindVariableType(form, new mutable.HashMap[Var, Type]())
-
     //returns the type of one formula
     def get(form: Formula): Type = {
       form match {
@@ -220,7 +215,7 @@ object LambdaManipulations{
   def betanf(form: Formula): Formula = {
 
     def betanfRoutine(form : Formula) : Formula = {
-      val formulaType = getType(form)
+      //val formulaType = getType(form)
 
       form match {
         case Apply(predicate: Lambda, formula) => {
@@ -246,7 +241,7 @@ object LambdaManipulations{
     val lam1 = Lambda(Var("w"), E->: T->: E ,Lambda(Var("F"), E->: T, Lambda(Var("z"), E->:T->:E->:E, Var("w"))))
     val lam2 = Lambda(Var("x"), E, Lambda(Var("y"), T, Var("x"))) //E
     val expr = Apply(lam1,lam2)
-    getType(expr)
+
     println(lam1.variable.inftype)
     println(expr)
     println(betanf(expr))
