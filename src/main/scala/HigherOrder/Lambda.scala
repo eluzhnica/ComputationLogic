@@ -76,6 +76,7 @@ case class Lambda(variable: Var, varTpe: Type, form: Formula) extends Formula {
   variable.inftype = varTpe
   variableBind(this)
 
+  //binds the head variable type
   private def variableBind(form : Lambda) = {
 
     def bindVariable(form: Formula, vartype : Var): Unit = {
