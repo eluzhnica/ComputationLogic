@@ -7,15 +7,26 @@ import scala.collection.mutable
  * Created by enxhi on 10/25/14.
  */
 
-abstract class Type
+abstract class Type{
+  def ->:(to : Type) : Type
+}
 
 abstract class Base extends Type
 
-object E extends Base
+object E extends Base{
+  def ->:(to : Type) = Arrow(to,E)
+  override def toString = "E"
+}
 
-object T extends Base
+object T extends Base{
+  def ->:(to : Type) = Arrow(to,T)
+  override def toString = "T"
+}
 
-case class Arrow(left: Type, right: Type) extends Type
+case class Arrow(left: Type, right: Type) extends Type{
+  def ->:(to : Type) = Arrow(to,this)
+  override def toString = "("+left.toString + "->"+ right.toString +")"
+}
 
 
 abstract class Formula {
@@ -39,6 +50,7 @@ case class Const(name: String, tp: Type) extends Formula {
 }
 
 case class Var(name: String) extends Formula {
+  //inferred type
   var inftype: Type = null
 
   //  def checkVariableTypeMatch(variable : Var) = if(name == variable.name) tp == variable.tp else true
@@ -49,18 +61,6 @@ case class Var(name: String) extends Formula {
   def rename(variable: Var, renamed: Var) = if (variable == this) renamed else Var(name)
 
   override def toString = "V("+name+")"
-}
-
-case class Predicate(name: String, tpe: Type) {
-  def checkVariableTypeMatch(variable: Var) = true
-
-  def free = Nil
-
-  def bound = Nil
-
-  def rename(variable: Var, renamed: Var) = Predicate(name, tpe)
-
-  override def toString = "P("+name+")"
 }
 
 case class Apply(pred: Formula, form: Formula) extends Formula {
@@ -80,6 +80,8 @@ case class Lambda(variable: Var, varTpe: Type, form: Formula) extends Formula {
   //  def checkVariableTypeMatch(vark : Var)= {
   //    if(variable.name == vark.name) (variable.tc == vark.tc) && form.checkVariableTypeMatch(vark) else form.checkVariableTypeMatch(vark)
   //  }
+  variable.inftype = varTpe
+
   def free = form.free
 
   def bound = variable :: form.bound
@@ -89,7 +91,7 @@ case class Lambda(variable: Var, varTpe: Type, form: Formula) extends Formula {
   override def toString = "(λ"+variable.toString+"."+form.toString +")"
 }
 
-object Functions {
+object LambdaManipulations{
 
   def alphaVariants(left: Formula, right: Formula) = alphaVariantRoutine(left, right, Nil)
 
@@ -154,15 +156,16 @@ object Functions {
         val generated = Var("gen_" + counter)
         counter += 1
         val formula = form.rename(toBeSub, generated)
-        subst(subs, generated, formula, formula.bound diff List(toBeSub))
+        subst(subs, generated, formula, formula.bound)
       } else
-        subst(subs, toBeSub, form, form.bound diff List(toBeSub))
+        subst(subs, toBeSub, form, form.bound)
     }
 
     substituteRoutine(sub, tosub, formula)
   }
 
 
+  //initializes the inferred type of the variables
   def bindVariableType(form: Formula, types: mutable.HashMap[Var, Type]): Unit = {
     form match {
       case Apply(pred, formula) => {
@@ -178,13 +181,14 @@ object Functions {
           t.inftype = types(t)
         }
       }
-      case _ =>
+      case c : Const =>
     }
   }
 
   def getType(form: Formula): Type = {
     bindVariableType(form, new mutable.HashMap[Var, Type]())
 
+    //returns the type of one formula
     def get(form: Formula): Type = {
       form match {
         case Lambda(variable, tpe, body) => {
@@ -204,7 +208,7 @@ object Functions {
           val bodyType = getType(body)
           predType match {
             case Arrow(alpha, beta) if(alpha == bodyType) => beta
-            case _ => throw new Exception("Ill-typed expression")
+            case _ => throw new Exception("Ill-typed expression at "+ Apply(pred,body))
           }
         }
       }
@@ -214,23 +218,40 @@ object Functions {
   }
 
   def betanf(form: Formula): Formula = {
-    val formulaType = getType(form)
-    form match {
-      case Apply(predicate: Lambda, formula) => {
-        betanf(substitute(formula, predicate.variable, predicate.form))
+
+    def betanfRoutine(form : Formula) : Formula = {
+      val formulaType = getType(form)
+
+      form match {
+        case Apply(predicate: Lambda, formula) => {
+          betanfRoutine(substitute(formula, predicate.variable, predicate.form))
+        }
+        case Lambda(Var(x), tp, form) => {
+          Lambda(Var(x), tp, betanfRoutine(form))
+        }
+        case t: Const => t
+        case v: Var => v
       }
-      case e => e
     }
+
+    betanfRoutine(form)
   }
 
-}
-
-object Main{
   def main(args : Array[String]) = {
-    val expr = Apply(Lambda(Var("e"), Arrow(E, Arrow(T, E)), Lambda(Var("y"), Arrow(T, E), Apply(Var("y"),Apply(Const("e", Arrow(E,T)),Const("f", E))))), Const("k", Arrow(E, Arrow(T, E))))
+
+//    in case you didn't go through all the code:
+//    you can construct types of Arrow(E,Arrow(E,T)) by simply typing E->E->T, it takes care of right associativity
+//    right associativity in scala is denoted by the symbol : in the end of the operator (->:)
+
+    val lam1 = Lambda(Var("w"), E->: T->: E ,Lambda(Var("F"), E->: T, Lambda(Var("z"), E->:T->:E->:E, Var("w"))))
+    val lam2 = Lambda(Var("x"), E, Lambda(Var("y"), T, Var("x"))) //E
+    val expr = Apply(lam1,lam2)
+    getType(expr)
+    println(lam1.variable.inftype)
     println(expr)
-    println(Functions.betanf(expr))
+    println(betanf(expr))
   }
+
 }
 
 
