@@ -106,7 +106,7 @@ case class Lambda(variable: Var, varTpe: Type, form: Formula) extends Formula {
   def bound = variable :: form.bound
   def rename(variable: Var, renamed: Var) = {
     if (variable == this.variable)
-      Lambda(variable, varTpe, form.rename(variable, renamed))
+      Lambda(renamed, varTpe, form.rename(variable, renamed))
     else
       Lambda(this.variable, varTpe, form.rename(variable,renamed))
   }
@@ -183,8 +183,8 @@ object LambdaManipulations{
         }
         case Lambda(variable, tpe, body) => {
           if(tobesub.name == variable.name /*&& variable.inftype == tobesub.inftype*/){
-            body
-          }else if(sub.free.contains(tobesub)){
+            body //this was described in the hint of the problem
+          }else if(sub.free.exists(v => variable.name == v.name  /*&& v.inftype == variable.inftype*/)){
             val newvar = Var("gen_"+counter)
             counter+=1
             newvar.inftype = variable.inftype
@@ -267,12 +267,14 @@ object LambdaManipulations{
     val lam2 = Lambda(Var("x"), E, Lambda(Var("y"), T, Var("x"))) //E
     val expr = Apply(lam1,lam2)
 
-    val lam11 = Lambda(Var("w"), E->: T->: E ,Lambda(Var("F"), E->: T, Lambda(Var("z"), E->:T->:E->:E, Var("w1"))))
+    val subtest = Lambda(Var("w1"), E->: T->: E ,Lambda(Var("F"), E->: T, Lambda(Var("z"), E->:T->:E->:E, Apply(Var("w1"),Var("f1")))))
+
+    val lam11 = Lambda(Var("w1"), E->: T->: E ,Lambda(Var("F"), E->: T, Lambda(Var("z"), E->:T->:E->:E, Var("w1"))))
     val lam22 = Lambda(Var("x1"), E, Lambda(Var("y"), T, Var("x1"))) //E
     println(alphaVariants(expr, Apply(lam11,lam22)))
 
     println(lam11)
-    println(substitute(Var("x"), Var("w"),lam11))
+    println(substitute(Apply(Var("x"),Var("w1")), Var("f1"),subtest))
     println(lam1.variable.inftype)
     println(expr)
     println(betanf(expr))
