@@ -261,7 +261,7 @@ object LambdaManipulations{
   def main(args : Array[String]) = {
 
 //    in case you didn't go through all the code:
-//    you can construct types of Arrow(E,Arrow(E,T)) by simply typing E->E->T, it takes care of right associativity
+//    you can construct types of Arrow(E,Arrow(E,T)) by simply typing E->: E->: T, it takes care of right associativity
 
     val lam1 = Lambda(Var("w"), E->: T->: E ,Lambda(Var("F"), E->: T, Lambda(Var("z"), E->:T->:E->:E, Var("w"))))
     val lam2 = Lambda(Var("x"), E, Lambda(Var("y"), T, Var("x"))) //E
