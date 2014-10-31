@@ -102,9 +102,14 @@ case class Lambda(variable: Var, varTpe: Type, form: Formula) extends Formula {
     bindVariable(form.form, form.variable)
   }
 
-  def free = form.free
+  def free = form.free diff List(variable)
   def bound = variable :: form.bound
-  def rename(variable: Var, renamed: Var) = if (variable == this.variable) Lambda(variable, varTpe, form.rename(variable, renamed)) else Lambda(this.variable, varTpe, form)
+  def rename(variable: Var, renamed: Var) = {
+    if (variable == this.variable)
+      Lambda(variable, varTpe, form.rename(variable, renamed))
+    else
+      Lambda(this.variable, varTpe, form.rename(variable,renamed))
+  }
   override def toString = "(λ"+variable.toString+"."+form.toString +")"
 }
 
@@ -114,17 +119,29 @@ object LambdaManipulations{
 
   def alphaVariantRoutine(form1: Formula, form2: Formula, renamings: List[(Var, Var)]): List[(Var, Var)] = {
     (form1, form2) match {
-      case (Lambda(var1, type1, form1), Lambda(var2, type2, form2)) if (type1 == type2) => alphaVariantRoutine(form1, form2, (var1, var2) :: renamings)
+      case (Lambda(var1, type1, form1), Lambda(var2, type2, form2)) if (type1 == type2) => {
+        alphaVariantRoutine(form1, form2, (var1, var2) :: renamings)
+      }
       case (Apply(pred1, form1), Apply(pred2, form2)) => {
         if (pred1 != pred2) {
-          alphaVariantRoutine(pred1, pred2, renamings)
-          alphaVariantRoutine(form1, form2, renamings)
+          val renam = alphaVariantRoutine(pred1, pred2, renamings)
+
+          if(renam != Nil) alphaVariantRoutine(form1, form2, renam)
+          else Nil
+
         } else {
           alphaVariantRoutine(form1, form2, renamings)
         }
       }
       case (a: Var, b: Var) => {
-        if (a.name != b.name && !(getType(a) == getType(b) && renamings.exists({ case (x, y) => (a.name == x.name) && (a.name == y.name)}))) {
+        val alreadyRenamed = renamings.exists({
+          case (x, y) => {
+            val inOrder = ((a.name == x.name) && (b.name != y.name)) || ((a.name != x.name && b.name == y.name))
+            val reversed = ((b.name == x.name) && (a.name != y.name)) || ((b.name != x.name && a.name == y.name))
+            inOrder || reversed
+          }
+        })
+        if (a.inftype != b.inftype || (a.name != b.name && alreadyRenamed)) {
           Nil
         } else {
           renamings
@@ -141,18 +158,21 @@ object LambdaManipulations{
     }
   }
 
-  def areAlphaVariants(left: Formula, right: Formula) = alphaVariants(left, right).size > 0
+  def areAlphaVariants(left: Formula, right: Formula) = alphaVariants(left, right) != Nil
 
 
+  //note: I allow substitution of variables with a formula of different type. This is done on purpose
+  // to allow this i can easily uncomment out condition check in the if clauses
   def substitute(sub : Formula, tosub : Var, formula : Formula) = {
 
+    var counter = 0
     def subst(sub: Formula, tobesub: Var, form: Formula, bound: List[Var]): Formula = {
       form match {
         case Const(name, tp) => Const(name, tp)
         case variable : Var => {
           if (bound.exists(x => x.name == variable.name )) {
             variable
-          } else if (tobesub.name == variable.name && variable.inftype == tobesub.inftype) {
+          } else if (tobesub.name == variable.name /*&& variable.inftype == tobesub.inftype*/) {
             sub
           } else {
             variable
@@ -162,19 +182,23 @@ object LambdaManipulations{
           Apply(subst(sub, tobesub, pred, bound), subst(sub, tobesub, formula, bound))
         }
         case Lambda(variable, tpe, body) => {
-          Lambda(variable, tpe, subst(sub, tobesub, body, bound))
+          if(tobesub.name == variable.name /*&& variable.inftype == tobesub.inftype*/){
+            body
+          }else if(sub.free.contains(tobesub)){
+            val newvar = Var("gen_"+counter)
+            counter+=1
+            newvar.inftype = variable.inftype
+            val renamed = Lambda(variable, tpe, body).rename(variable, newvar)
+            subst(sub, tobesub, renamed, newvar :: bound diff List(variable))
+          }else {
+            Lambda(variable, tpe, subst(sub, tobesub, body, bound))
+          }
         }
       }
     }
 
-    var counter = 0
+
     def substituteRoutine(subs: Formula, toBeSub: Var, form: Formula): Formula = {
-      if (subs.free.contains(toBeSub)) {
-        val generated = Var("gen_" + counter)
-        counter += 1
-        val formula = form.rename(toBeSub, generated)
-        subst(subs, generated, formula, formula.bound)
-      } else
         subst(subs, toBeSub, form, form.bound)
     }
 
@@ -182,7 +206,7 @@ object LambdaManipulations{
   }
 
 
-
+  //the TC function, I renamed it for readability issues
   def getType(form: Formula): Type = {
     //returns the type of one formula
     def get(form: Formula): Type = {
@@ -233,19 +257,26 @@ object LambdaManipulations{
     betanfRoutine(form)
   }
 
+
   def main(args : Array[String]) = {
 
 //    in case you didn't go through all the code:
 //    you can construct types of Arrow(E,Arrow(E,T)) by simply typing E->E->T, it takes care of right associativity
-//    right associativity in scala is denoted by the symbol : in the end of the operator (->:)
 
     val lam1 = Lambda(Var("w"), E->: T->: E ,Lambda(Var("F"), E->: T, Lambda(Var("z"), E->:T->:E->:E, Var("w"))))
     val lam2 = Lambda(Var("x"), E, Lambda(Var("y"), T, Var("x"))) //E
     val expr = Apply(lam1,lam2)
 
+    val lam11 = Lambda(Var("w"), E->: T->: E ,Lambda(Var("F"), E->: T, Lambda(Var("z"), E->:T->:E->:E, Var("w1"))))
+    val lam22 = Lambda(Var("x1"), E, Lambda(Var("y"), T, Var("x1"))) //E
+    println(alphaVariants(expr, Apply(lam11,lam22)))
+
+    println(lam11)
+    println(substitute(Var("x"), Var("w"),lam11))
     println(lam1.variable.inftype)
     println(expr)
     println(betanf(expr))
+
   }
 
 }
