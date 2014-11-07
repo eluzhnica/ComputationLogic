@@ -3,7 +3,10 @@ package main.scala.HigherOrder
 
 /**
  * Created by enxhi on 10/25/14.
+ * This IS the version you should submit, not the GIT one
  */
+
+
 
 abstract class Type{
   def ->:(to : Type) : Type
@@ -67,7 +70,7 @@ case class Apply(pred: Formula, form: Formula) extends Formula {
   def free = (form.free ::: pred.free).distinct
   def bound = (pred.bound ::: form.bound).distinct
   def rename(variable: Var, renamed: Var) = Apply(pred.rename(variable, renamed), form.rename(variable, renamed))
-  override def toString = "("+pred.toString +")("+ form.toString +")"
+  override def toString = pred.toString+"("+ form.toString + ")"
 }
 
 //maybe removing the type from variable
@@ -110,7 +113,7 @@ case class Lambda(variable: Var, varTpe: Type, form: Formula) extends Formula {
     else
       Lambda(this.variable, varTpe, form.rename(variable,renamed))
   }
-  override def toString = "(λ"+variable.toString+"."+form.toString +")"
+  override def toString = "λ"+variable.toString+"."+form.toString
 }
 
 object LambdaManipulations{
@@ -360,30 +363,29 @@ object LambdaManipulations{
   //generates the application arguments that are going to be applied to lambda expression
   def gApplication(value : Type, formula : Formula, vars : List[Var], avoid : List[Var]) = {
 
-    //generates the block that is used inside H1,H2,.. (for instance H1-XY-)
-    def generateOne(vars: List[Var]): Formula = {
+    //generates the block that is used inside H1,H2,.. (for instance H1XY)
+    def generateOne(vars: List[Var], formula : Formula): Formula = {
       vars match {
-        case head :: tail if (tail != Nil) => {
-          Apply(head, generateOne(tail))
+        case head :: tail => {
+          generateOne(tail, Apply(formula, head))
         }
-        case rest => rest.head
+        case Nil => formula
       }
     }
 
-
+    //keeps track of the indexes, used to label H_1xy H_2xy and so on
     var h_counter = 0
-    val block = generateOne(vars)
 
     // this generates the actual application arguments to the lambda expression
     def generateApplications(value: Type, varName : String, formula: Formula): Formula = {
       h_counter += 1
       value match {
         case Arrow(a, b) => {
-          //if we are not at the end then we can go on and recurse
+          //if we are not at the end (return type) then we can go on and recurse
           if (!(b == E || b == T)) {
-            generateApplications(b, varName, Apply(formula, Apply(Var(varName + h_counter, a), block)))
+            generateApplications(b, varName, Apply(formula, generateOne(vars, Var(varName + h_counter, a))))
           } else {
-            Apply(formula, Apply(Var(varName + h_counter, a), block))
+            Apply(formula, generateOne(vars, Var(varName + h_counter, a)))
           }
         }
       }
@@ -403,7 +405,7 @@ object LambdaManipulations{
   def gLambda(value : Type, vars : List[Var], application : Formula ) = {
 
     var counter = 0
-    //a way to avoid the variables is, just take the first one of the restricted vars and append indexes to it
+
     def generateLambdas(value: Type, variableName : String, appl: Formula): Formula = {
       value match {
         case Arrow(a, b) => {
@@ -458,6 +460,14 @@ object LambdaManipulations{
     val head = Var("k", T ->: T->: E)
     val tpe = T ->: E ->: E
 
+    val left2 = Lambda(Var("X"),E->: E ->:E, Lambda(Var("Y"), E->:E, Apply(Var("Z"),Var("K"))))
+    val right2 = Lambda(Var("A"),E->: E ->:E, Lambda(Var("B"), E->:E, Apply(Var("Z"),Var("F1"))))
+
+    val left3 = Lambda(Var("X"),E->: E ->:E, Lambda(Var("Y"), E->:E, Apply(Var("Z"),Var("K"))))
+    val right3 = Apply(Var("X"),Apply(Var("Z"), Apply(Var("F"),Var("E1"))))
+
+    println(Simplification(left2,right2))
+    println(Simplification(left3,right3))
     println(gbinding(head,tpe, Nil))
   }
 
