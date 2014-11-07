@@ -263,6 +263,12 @@ object LambdaManipulations{
     betanfRoutine(form)
   }
 
+  /**
+   *
+   * @param left - left formula
+   * @param right - right formula
+   * @return last SIM step
+   */
   def Simplification(left : Formula, right : Formula) : List[(Formula,Formula)] = {
 
     var skolems: List[Const] = Nil
@@ -276,6 +282,12 @@ object LambdaManipulations{
       constants.intersect(consts) != Nil
     }
 
+    /**
+     *
+     * @param tobeUni - pairs to be unified (simplifed)
+     * @param areWeDone - counts the number of circulations because of no case match
+     * @return - the simplified pairs
+     */
     def SIM(tobeUni: List[(Formula, Formula)], areWeDone: Integer): List[(Formula, Formula)] = {
       //if we circulated all the pairs without doing work then we're done
       if (areWeDone > tobeUni.size){
@@ -351,6 +363,11 @@ object LambdaManipulations{
   }
 
 
+  /**
+   *
+   * @param t
+   * @return the return type of a type
+   */
   private def getReturnType(t : Type) : Type = {
     t match{
       case arrow : Arrow => getReturnType(arrow.right)
@@ -360,8 +377,15 @@ object LambdaManipulations{
   }
 
 
-  //generates the application arguments that are going to be applied to lambda expression
-  def gApplication(value : Type, formula : Formula, vars : List[Var], avoid : List[Var]) = {
+  /**
+   *
+   * @param value - the type of the head
+   * @param formula - the already generated lambda expression
+   * @param vars - variables used in the lambda expression where this is going to be applied to
+   * @param avoid - variable names to avoid
+   * @return Formula - the application arguments that are going to be applied to lambda expression
+   */
+  def gApplication(value : Type, formula : Formula, vars : List[Var], avoid : List[Var]) : Formula = {
 
     //generates the block that is used inside H1,H2,.. (for instance H1XY)
     def generateOne(vars: List[Var], formula : Formula): Formula = {
@@ -398,11 +422,19 @@ object LambdaManipulations{
     while(avoiding.exists(x => (x.name.substring(0,name.length) == name))){
       name = random.alphanumeric(1).toString
     }
+
+
     generateApplications(value, name, formula)
   }
 
-  //generates the lambda expression based on the type
-  def gLambda(value : Type, vars : List[Var], application : Formula ) = {
+  /**
+   *
+   * @param value - the alpha type
+   * @param vars - variables to avoid
+   * @param application - application to be used, usually the given head of gBinding
+   * @return lambdaExpression.head
+   */
+  def gLambda(value : Type, vars : List[Var], application : Formula ) : Formula= {
 
     var counter = 0
 
@@ -429,6 +461,29 @@ object LambdaManipulations{
     generateLambdas(value, name, application)
   }
 
+  /**
+   *
+   * @param formula - base lambda expression, instance Lambda(x,_,Lambda(y,_,Var(Head))
+   * @param value - variable to be substituted instead of head
+   * @return projection
+   */
+  def gProjections(formula: Formula, value: Var): Formula = {
+    formula match{
+      case Lambda(v,t,form) => {
+        Lambda(v,t,gProjections(form,value))
+      }
+      case v : Var => value
+      case _ => throw new Error("Malformed base lambda")
+    }
+  }
+
+  /**
+   *
+   * @param head - the head of the general binder
+   * @param tpe - the type of the to be generated general binder
+   * @param avoid - variables to avoid
+   * @return  general binder (+ projections (if not required remove it))
+   */
   def gbinding(head : Var, tpe : Type, avoid : List[Var]) : Formula = {
     //if the return types don't match there is noway to generate anything correct or if the type is base type
     if(getReturnType(head.inftype) != getReturnType(tpe) || tpe == E || tpe == T) {
@@ -436,14 +491,22 @@ object LambdaManipulations{
     }
 
     val application : Formula = head
-    var formula : Formula = gLambda(tpe, avoid, application)
+    //avoid the head, don't capture it
+    var formula : Formula = gLambda(tpe, head::avoid, application)
+
+    val headReturnType = getReturnType(head.inftype)
+
+    // I wasn't sure if I have to implement this one
+    // I only generate projections for which the variable type matches with the return type that head has
+    //UNCOMMENT THIS TO GENERATE PROJ.
+    //val projections : List[Formula] = formula.bound.filter(x => (x.inftype == headReturnType)).map(x => gProjections(formula, x))
 
     //if the head indicates that it takes parameters then we go an generate them
     if(!(head.inftype == E || head.inftype == T)){
-      formula = gApplication(head.inftype, formula, formula.bound, avoid)
+      formula = gApplication(head.inftype, formula, formula.bound, head::avoid)
     }
 
-    formula
+    formula //:: projections //uncomment it if we need to generate the projections
   }
 
   def main(args : Array[String]) : Unit = {
@@ -468,7 +531,7 @@ object LambdaManipulations{
 
     println(Simplification(left2,right2))
     println(Simplification(left3,right3))
-    println(gbinding(head,tpe, Nil))
+    println(gbinding(head,tpe, List(Var("K"))))
   }
 
 }
