@@ -1,8 +1,5 @@
 
 import main.scala.HigherOrder._
-import main.scala._
-
-import scala.collection.mutable._
 object Test	 {
   //Problem 3
 

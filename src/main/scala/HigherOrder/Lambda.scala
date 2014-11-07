@@ -1,7 +1,5 @@
 package main.scala.HigherOrder
 
-import scala.collection.mutable
-
 
 /**
  * Created by enxhi on 10/25/14.
@@ -34,14 +32,14 @@ abstract class Formula {
   def free: List[Var]
 
   def bound: List[Var]
-
+  def constants : List[Const]
   def rename(variable: Var, renamed: Var): Formula
 }
 
 case class Const(name: String, tp: Type) extends Formula {
   //  def checkVariableTypeMatch(variable : Var) = true
   def free = Nil
-
+  def constants = List(this)
   def bound = Nil
 
   def rename(variable: Var, renamed: Var) = Const(name, tp)
@@ -49,13 +47,14 @@ case class Const(name: String, tp: Type) extends Formula {
   override def toString = "C(" + name +")"
 }
 
-case class Var(name: String) extends Formula {
-  //inferred type
-  var inftype: Type = null
+case class Var(name: String, tpe : Type = null) extends Formula {
 
+  //inferred type
+  var inftype: Type = tpe
+  def constants = Nil
   //  def checkVariableTypeMatch(variable : Var) = if(name == variable.name) tp == variable.tp else true
   def free = List(this)
-
+  def getType = inftype
   def bound = Nil
 
   def rename(variable: Var, renamed: Var) = if (variable == this) renamed else Var(name)
@@ -64,9 +63,9 @@ case class Var(name: String) extends Formula {
 }
 
 case class Apply(pred: Formula, form: Formula) extends Formula {
-
-  def free = form.free
-  def bound = form.bound
+  def constants = (pred.constants ::: form.constants).distinct
+  def free = (form.free ::: pred.free).distinct
+  def bound = (pred.bound ::: form.bound).distinct
   def rename(variable: Var, renamed: Var) = Apply(pred.rename(variable, renamed), form.rename(variable, renamed))
   override def toString = "("+pred.toString +")("+ form.toString +")"
 }
@@ -102,6 +101,7 @@ case class Lambda(variable: Var, varTpe: Type, form: Formula) extends Formula {
     bindVariable(form.form, form.variable)
   }
 
+  def constants = form.constants
   def free = form.free diff List(variable)
   def bound = variable :: form.bound
   def rename(variable: Var, renamed: Var) = {
@@ -246,8 +246,11 @@ object LambdaManipulations{
         case Apply(predicate: Lambda, formula) => {
           betanfRoutine(substitute(formula, predicate.variable, predicate.form))
         }
-        case Lambda(Var(x), tp, form) => {
-          Lambda(Var(x), tp, betanfRoutine(form))
+        case Apply(predicate, formula) => {
+          Apply(betanfRoutine(predicate), betanfRoutine(formula))
+        }
+        case Lambda(v, tp, form) => {
+          Lambda(v, tp, betanfRoutine(form))
         }
         case t: Const => t
         case v: Var => v
@@ -257,28 +260,205 @@ object LambdaManipulations{
     betanfRoutine(form)
   }
 
+  def Simplification(left : Formula, right : Formula) : List[(Formula,Formula)] = {
 
-  def main(args : Array[String]) = {
+    var skolems: List[Const] = Nil
 
-//    in case you didn't go through all the code:
-//    you can construct types of Arrow(E,Arrow(E,T)) by simply typing E->: E->: T, it takes care of right associativity
+    def containsSkolems(tuples: List[(Formula, Formula)], consts: List[Const]): Boolean = {
+      val constants = tuples.map({ case (left, right) => {
+        (left.constants ::: right.constants).distinct
+      }
+      })
 
-    val lam1 = Lambda(Var("w"), E->: T->: E ,Lambda(Var("F"), E->: T, Lambda(Var("z"), E->:T->:E->:E, Var("w"))))
-    val lam2 = Lambda(Var("x"), E, Lambda(Var("y"), T, Var("x"))) //E
-    val expr = Apply(lam1,lam2)
+      constants.intersect(consts) != Nil
+    }
 
-    val subtest = Lambda(Var("w1"), E->: T->: E ,Lambda(Var("F"), E->: T, Lambda(Var("z"), E->:T->:E->:E, Apply(Var("w1"),Var("f1")))))
+    def SIM(tobeUni: List[(Formula, Formula)], areWeDone: Integer): List[(Formula, Formula)] = {
+      //if we circulated all the pairs without doing work then we're done
+      if (areWeDone > tobeUni.size){
+        return tobeUni
+      }
 
-    val lam11 = Lambda(Var("w1"), E->: T->: E ,Lambda(Var("F"), E->: T, Lambda(Var("z"), E->:T->:E->:E, Var("w1"))))
-    val lam22 = Lambda(Var("x1"), E, Lambda(Var("y"), T, Var("x1"))) //E
-    println(alphaVariants(expr, Apply(lam11,lam22)))
+      tobeUni match {
+        //make the substitutions in both pairs and recurse
+        case (left: Lambda, right: Lambda) :: rest => {
+          val skol = Const("sk_" + skolems.size, left.varTpe)
+          skolems ::= skol
+          val l = substitute(skol, left.variable, left.form)
+          val r = substitute(skol, right.variable, right.form)
 
-    println(lam11)
-    println(substitute(Apply(Var("x"),Var("w1")), Var("f1"),subtest))
-    println(lam1.variable.inftype)
-    println(expr)
-    println(betanf(expr))
+          SIM((r, l) :: rest, 0)
+        }
+        //use the eta rule
+        case (left: Lambda, right: Formula) :: rest => {
+          val skol = Const("sk_" + skolems.size, left.varTpe)
+          skolems ::= skol
+          val l = substitute(skol, left.variable, left.form)
+          val r = Apply(right, skol)
+          SIM((r, l) :: rest, 0)
+        }
+        //reuse the previous case
+        case (left: Formula, right: Lambda) :: rest => {
+          SIM((right, left) :: rest, 0)
+        }
+        //if the head of the applications match use the decompose case
+        case (left: Apply, right: Apply) :: rest if (left.pred == right.pred) => {
+          SIM((left.form, right.form) :: rest, 0)
+        }
+        // the syntax gets ugly, i even googled it, that's the preferred way to do it.
+        case (left: Var, right) :: rest if (!right.free.exists(x => (x.name == left.name))) => { //do we have the case X = something (X) ?
+          var modified = false
 
+          //check the individual pairs
+          val newrest = rest.map({
+            case (x, y) => {
+
+              if(!containsSkolems(List((x,y)), skolems) //do the contains skolem constants?
+                && (x.free ::: y.free)
+                .distinct
+                .exists(x => (x.name == left.name))  // is there anything we can substitute, (is X in free(E))
+              ){
+                modified = true
+                (substitute(right, left, x),substitute(right, left, y))
+              }else{
+                (x,y)
+              }
+
+            }
+          })
+
+          // if nothing was substituted then increase the counter
+          if(modified)
+            SIM(newrest :+(left, right), 0)
+          else
+            SIM(newrest :+ (left,right), areWeDone+1)
+
+        }
+        case Nil => {
+          tobeUni
+        }
+        // if none of the cases worked out, try to apply the rules on the rest
+        // but remember how many times we did no work
+        case a :: b => SIM(b ::: List(a), areWeDone + 1)
+      }
+
+    }
+
+    SIM(List((left,right)),0)
+  }
+
+
+  private def getReturnType(t : Type) : Type = {
+    t match{
+      case arrow : Arrow => getReturnType(arrow.right)
+      case E => E
+      case T => T
+    }
+  }
+
+
+  //generates the application arguments that are going to be applied to lambda expression
+  def gApplication(value : Type, formula : Formula, vars : List[Var], avoid : List[Var]) = {
+
+    //generates the block that is used inside H1,H2,.. (for instance H1-XY-)
+    def generateOne(vars: List[Var]): Formula = {
+      vars match {
+        case head :: tail if (tail != Nil) => {
+          Apply(head, generateOne(tail))
+        }
+        case rest => rest.head
+      }
+    }
+
+
+    var h_counter = 0
+    val block = generateOne(vars)
+
+    // this generates the actual application arguments to the lambda expression
+    def generateApplications(value: Type, varName : String, formula: Formula): Formula = {
+      h_counter += 1
+      value match {
+        case Arrow(a, b) => {
+          //if we are not at the end then we can go on and recurse
+          if (!(b == E || b == T)) {
+            generateApplications(b, varName, Apply(formula, Apply(Var(varName + h_counter, a), block)))
+          } else {
+            Apply(formula, Apply(Var(varName + h_counter, a), block))
+          }
+        }
+      }
+    }
+
+    //made in China
+    val random = new scala.util.Random()
+    var name = random.alphanumeric(1).toString
+    val avoiding = vars ::: avoid
+    while(avoiding.exists(x => (x.name.substring(0,name.length) == name))){
+      name = random.alphanumeric(1).toString
+    }
+    generateApplications(value, name, formula)
+  }
+
+  //generates the lambda expression based on the type
+  def gLambda(value : Type, vars : List[Var], application : Formula ) = {
+
+    var counter = 0
+    //a way to avoid the variables is, just take the first one of the restricted vars and append indexes to it
+    def generateLambdas(value: Type, variableName : String, appl: Formula): Formula = {
+      value match {
+        case Arrow(a, b) => {
+          counter += 1
+          Lambda(Var(variableName + counter, a), a, generateLambdas(b, variableName, appl))
+        }
+        case E | T => {
+          appl
+        }
+      }
+    }
+
+
+    //here we go Sir, expect something made in China
+    val random = new scala.util.Random()
+    var name = random.alphanumeric(1).toString
+    while(vars.exists(x => (x.name.substring(0,name.length) == name))){
+      name = random.alphanumeric(1).toString
+    }
+
+    generateLambdas(value, name, application)
+  }
+
+  def gbinding(head : Var, tpe : Type, avoid : List[Var]) : Formula = {
+    //if the return types don't match there is noway to generate anything correct or if the type is base type
+    if(getReturnType(head.inftype) != getReturnType(tpe) || tpe == E || tpe == T) {
+      return null
+    }
+
+    val application : Formula = head
+    var formula : Formula = gLambda(tpe, avoid, application)
+
+    //if the head indicates that it takes parameters then we go an generate them
+    if(!(head.inftype == E || head.inftype == T)){
+      formula = gApplication(head.inftype, formula, formula.bound, avoid)
+    }
+
+    formula
+  }
+
+  def main(args : Array[String]) : Unit = {
+    val left = Lambda(Var("X"), E,  Var("X"))
+    val right = Lambda( Var("Y"), E, Var("Z", E))
+
+    val left1 = Lambda( Var("X"), E->:E, Apply(Var("X"),Const("a",E)))
+    val right1 = Const("f", (E ->: E) ->: E)
+
+
+    println(Simplification(left,right))
+    println(Simplification(left1,right1))
+
+    val head = Var("k", T ->: T->: E)
+    val tpe = T ->: E ->: E
+
+    println(gbinding(head,tpe, Nil))
   }
 
 }
