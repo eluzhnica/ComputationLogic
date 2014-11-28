@@ -284,7 +284,7 @@ object LambdaManipulations{
 
   def getDecomposeMatch(left: Formula, right: Formula) : List[(Formula,Formula)] = (left, right) match {
     case (l : Var, r : Var) =>{
-      if(l==r){
+      if(l.name==r.name){
         Nil
       }else {
         null
@@ -472,7 +472,7 @@ object LambdaManipulations{
 
     var name = generateString(1)
     val avoiding = vars ::: avoid
-    while(avoiding.exists(x => (x.name == name))){
+    while(avoiding.exists(x => (x.name.contains(name)))){
       name = generateString(1)
     }
 
@@ -506,7 +506,7 @@ object LambdaManipulations{
 
     //here we go Sir, expect something made in China
     var name = generateString(1)
-    while(vars.exists(x => (x.name == name))){
+    while(vars.exists(x => (x.name.contains(name)))){
       name = generateString(1)
     }
 
@@ -550,10 +550,16 @@ object LambdaManipulations{
       return null
     }
 
-    val application : Formula = head
+    var application : Formula = head
+
     //avoid the head, don't capture it
     var formula : Formula = gLambda(tpe, head::avoid, application)
 
+    if(!(head.inftype == E || head.inftype == T)){
+      application = gApplication(head.inftype, application, formula.bound, head::avoid)
+    }
+
+    formula = formula.replace(head,application)
 
     val headReturnType = getReturnType(head.inftype)
 
@@ -566,15 +572,14 @@ object LambdaManipulations{
       else if(variable.inftype == E || variable.inftype == T){
         projections ::= formula.rename(head,variable)
       }else {
-        projections ::= gApplication(head.inftype, formula.rename(head,variable), formula.bound, avoid)
+        val tempAppl= gApplication(head.inftype, variable, formula.bound, avoid)
+        projections ::= formula.replace(variable,tempAppl)
       }
     })  //we don't need to avoid the head
 
 
     //if the head indicates that it takes parameters then we go and generate them
-    if(!(head.inftype == E || head.inftype == T)){
-      formula = gApplication(head.inftype, formula, formula.bound, head::avoid)
-    }
+
 
     formula::projections
   }
@@ -605,6 +610,15 @@ object LambdaManipulations{
     }
 
 
+    def elimConditionCheck(tuples : List[(Formula,Formula)], skolems : List[Const]) : Boolean = {
+      tuples match {
+        case (left: Var, right: Formula) :: rest => {
+          return !right.free.contains(left) && !containsSkolems((Var("test"), right) :: Nil, skolems) && rest.flatMap({ case (x, y) => x.free ::: y.free}).contains(left)
+        }
+        case _ => false
+      }
+    }
+
     def getApplicationHead(apply: Formula) : Formula = apply match{
       case Apply(l,r) => {
         getApplicationHead(l)
@@ -621,10 +635,34 @@ object LambdaManipulations{
      * @param areWeDone - counts the number of circulations because of no case match
      * @return - the simplified pairs
      */
-    def SIM(tobeUni: List[(Formula, Formula)], areWeDone: Integer, binderacc : List[List[(Var,Formula)]]): List[List[(Var, Formula)]] = {
+    def SIM(tobeUni: List[(Formula, Formula)], areWeDone: Integer): List[List[(Var, Formula)]] = {
       //if we circulated all the pairs without doing work then we're done, it's unified
-      if (areWeDone > tobeUni.size){
-        return binderacc
+
+      val newUni = tobeUni.filterNot({
+        case(x:Var,y:Var) => (x==y)
+        case _ => false
+      })
+
+      val vars = newUni.collect({
+        case(x: Var, y) => x
+        case(y, x : Var) => x
+      })
+
+      //are all the pairs distinct on variable part and are all the pairs x =? smth and smth doesnt contain skolems or x
+      if(newUni == Nil || (vars.size == newUni.size && vars.distinct.size == vars.size && newUni.forall({
+        case(x : Var, y: Formula) => !y.free.contains(x) && y.constants.intersect(skolems) == Nil
+        case(y : Formula, x : Var) => !y.free.contains(x) && y.constants.intersect(skolems) == Nil
+      }))){
+        return Nil
+      }
+
+      if (areWeDone - 2 > tobeUni.size){
+
+        //collect all the variables that unify to smth
+//        val varToVar : List[(Var,Formula)] = tobeUni.collect({
+//          case(x:Var,y:Var) => (x,y)
+//        })
+        return /*varToVar :: binderacc*/ null
       }
 
       tobeUni match {
@@ -635,7 +673,7 @@ object LambdaManipulations{
           val l = substitute(skol, left.variable, left.form)
           val r = substitute(skol, right.variable, right.form)
 
-          SIM((r, l) :: rest, 0, binderacc)
+          SIM((r, l) :: rest, 0)
         }
         //use the eta rule
         case (left: Lambda, right: Formula) :: rest => {
@@ -643,151 +681,23 @@ object LambdaManipulations{
           skolems ::= skol
           val l = substitute(skol, left.variable, left.form)
           val r = Apply(right, skol)
-          SIM((r, l) :: rest, 0, binderacc)
+          SIM((r, l) :: rest, 0)
         }
         //reuse the previous case
         case (left: Formula, right: Lambda) :: rest => {
-          SIM((right, left) :: rest, 0, binderacc)
+          SIM((right, left) :: rest, 0)
         }
         //if the head of the applications match use the decompose case
-        case (left: Apply, right: Apply) :: rest => {
-          if (left.pred == right.pred) {
-            SIM((left.form, right.form) :: rest, 0, binderacc)
-          }else{
-            //check if the decomposition matches on head
-            val matchingPairs = getDecomposeMatch(left,right)
-            if(matchingPairs != null){
-              SIM(matchingPairs ::: rest, 0, binderacc)
-            }else{
+        case (left: Apply, right : Apply) :: rest if (left.pred == right.pred) =>{
 
-              val leftHead = getApplicationHead(left)
-              val rightHead = getApplicationHead(right)
+          SIM((left.form, right.form) :: rest, 0)
 
-              //if there is no proper construction of nested applications I will get null
-              if(leftHead != null && rightHead != null){
-
-                (leftHead, rightHead) match{
-                  case (l : Var, r : Const) =>{
-                    val binders = gbinding(Var(r.name,r.tp), l.inftype, l.bound ::: l.free ::: r.bound ::: r.free)
-
-                    //for each binder recursively get the substitutions (binders) in lower level
-                    //apply the substitutions to the binder from which they were generated
-                    //check if we HAVE TO unify other pairs, if not return the substitutions(binders) up in the tree
-                    //the reason I am using a list of lists is that one binder can have multiple substitutions to be made in order to solve it
-                    //in other words in that binder we generated more than one variable
-
-                    var no_binders_from_next_stage = false
-
-                    var substitutions_to_return : List[(Var,Formula)] = Nil
-
-                    //if there are no binders that can be generated then it can't be unified. return null for failure
-                    // we don't care if there is something in the rest because if there is, it is an AND branch.
-                    if(binders == null || binders.size == 0) {
-                      return null
-                    }
-
-
-                    binders.foreach(binder => {
-                      val newleft = betanfRecursive(substitute(binder, l, left))
-
-                      //find the substitutions by replacing them recursively
-                      val result = SIM((newleft, right) :: Nil, 0, Nil)
-
-                      //did it fail?
-                      if (result != null) {
-
-                        //if not then get each set of substitution for the variables generated in the binder and apply them to solve the binder
-                        result.foreach(set_of_sub => {
-                          if (set_of_sub != null) {
-                            var onePossibleBinder: Formula = binder
-                            set_of_sub.foreach({
-                              case (varib, subst) =>{
-                                onePossibleBinder = substitute(subst, varib, onePossibleBinder)
-                              }
-                            })
-                            //the head -> binder should be added to the results
-                            substitutions_to_return ::= (l -> onePossibleBinder)
-                          }
-                        })
-                      }
-                    })
-
-                    if(rest == Nil){
-                      substitutions_to_return :: binderacc
-                    }else{
-                      SIM(rest,0, substitutions_to_return :: binderacc)
-                    }
-
-
-                  }
-                  case (l : Var, r : Var) => {
-                    //copy paste the code form above, change some stuff (okay I could build a function)
-                    if(l.inftype ==null || r.inftype==null){
-                      throw new Error("Variables have to be strongly typed!")
-                    }
-                    val binders = gbinding(Var(r.name,r.inftype), l.inftype, l.bound ::: l.free ::: r.bound ::: r.free)
-
-                    //for each binder recursively get the substitutions (binders) in lower level
-                    //apply the substitutions to the binder from which they were generated
-                    //check if we HAVE TO unify other pairs, if not return the substitutions(binders) up in the tree
-                    //the reason I am using a list of lists is that one binder can have multiple substitutions to be made in order to solve it
-                    //in other words in that binder we generated more than one variable
-
-                    var substitutions_to_return : List[(Var,Formula)] = Nil
-
-                    //if there are no binders that can be generated then it can't be unified. return null for failure
-                    // we don't care if there is something in the rest because if there is, it is an AND branch.
-                    if(binders == null || binders.size == 0) {
-                      return null
-                    }
-
-
-                    binders.foreach(binder => {
-                      val newleft = betanfRecursive(substitute(binder, l, left))
-
-                      //find the substitutions by replacing them recursively
-                      val result = SIM((newleft, right) :: Nil, 0, Nil)
-
-                      //did it fail?
-                      if (result != null) {
-
-                        //if not then get each set of substitution for the variables generated in the binder and apply them to solve the binder
-                        result.foreach(set_of_sub => {
-                          if (set_of_sub != null) {
-                            var onePossibleBinder: Formula = binder
-                            set_of_sub.foreach({
-                              case (varib, subst) =>{
-                                onePossibleBinder = substitute(subst, varib, onePossibleBinder)
-                              }
-                            })
-                            //the head -> binder should be added to the results
-                            substitutions_to_return ::= (l -> onePossibleBinder)
-                          }
-                        })
-                      }
-                    })
-
-                    if(rest == Nil){
-                      substitutions_to_return :: binderacc
-                    }else{
-                      SIM(rest,0, substitutions_to_return :: binderacc)
-                    }
-
-
-                  }
-                  case _ => SIM((right,left) :: rest, areWeDone, binderacc)
-                }
-              }else {
-                SIM(rest :+(left, right), areWeDone + 1, binderacc)
-              }
-            }
-          }
         }
-        case (left: Var, right) :: rest => {
-          //except the obvious case x = term, term doesn't contain X as free variable, we might have
-          //the case J=J which is closed by dec. with arity 0.
-          if (!right.free.exists(x => (x.name == left.name)) || left == right) {
-            return binderacc //note that this would return Nil if there is nothing there, which is not a FAIL return.
+
+        case (left: Var, right) :: rest if(elimConditionCheck((left,right)::rest, skolems)) => {
+          //x = x ? or the regular check
+          if (left == right){
+            return SIM(rest,areWeDone+1) //note that this would return Nil if there is nothing there, which is not a FAIL return.
           }
 
           var modified = false
@@ -813,23 +723,205 @@ object LambdaManipulations{
 
           // if nothing was substituted then increase the counter
           if(modified)
-            SIM(newrest :+(left, right), 0, binderacc)
+            SIM(newrest :+(left, right), 0)
           else
-            SIM(newrest :+ (left,right), areWeDone+1, binderacc)
+            SIM(newrest :+ (left,right), areWeDone+1)
 
+        }
+        case (left : Apply, right) :: rest =>{
+          //check if the decomposition matches on head
+          val matchingPairs = getDecomposeMatch(left,right)
+          if(matchingPairs != null){
+            SIM(matchingPairs ::: rest, 0)
+          }else{
+
+            val leftHead = getApplicationHead(left)
+            val rightHead = getApplicationHead(right)
+
+            //if there is no proper construction of nested applications I will get null
+            if(leftHead != null && rightHead != null){
+
+              (leftHead, rightHead) match{
+                case (l : Var, r : Const) =>{
+                  val binders: List[Formula] = gbinding(Var(r.name,r.tp), l.inftype, (left.bound ::: left.free ::: right.bound ::: right.free).diff(List(Var(r.name,r.tp))))
+
+                  //for each binder recursively get the substitutions (binders) in lower level
+                  //apply the substitutions to the binder from which they were generated
+                  //check if we HAVE TO unify other pairs, if not return the substitutions(binders) up in the tree
+                  //the reason I am using a list of lists is that one binder can have multiple substitutions to be made in order to solve it
+                  //in other words in that binder we generated more than one variable
+
+                  //if there are no binders that can be generated then it can't be unified. return null for failure
+                  // we don't care if there is something in the rest because if there is, it is an AND branch.
+                  if(binders == null || binders.size == 0) {
+                    null
+                  }else {
+                    var one_setOfSub_perBinder : List[(Var,Formula)] = Nil
+                    var allSubsPerBinder: List[List[(Var, Formula)]] = Nil
+                    var results_for_all_binders : List[List[(Var,Formula)]] = Nil
+
+                    binders.foreach(binder => {
+                      val newleft = betanfRecursive(substitute(binder, l, left))
+
+                      //find the substitutions by replacing them recursively
+                      val result = SIM((newleft, right) :: rest, 0)
+
+                      //did it fail?
+                      //we also need to check if it returned Nil
+                      if (result != null) {
+
+
+                        //if not then get each set of substitution for the variables generated in the binder and apply them to solve the binder
+                        result.foreach(set_of_sub => {
+                          if (set_of_sub != null) {
+                            var onePossibleBinder: Formula = binder
+                            var variableSubs: List[(Var, Formula)] = Nil
+                            set_of_sub.foreach({
+                              case (varib, subst) => {
+                                if (onePossibleBinder.free.contains(varib)) {
+                                  onePossibleBinder = substitute(subst, varib, onePossibleBinder)
+                                } else {
+                                  variableSubs ::= (varib, subst)
+                                }
+                              }
+                            })
+                            //the head -> binder should be added to the results
+                            one_setOfSub_perBinder ::= (l -> betanfRecursive(onePossibleBinder))
+                            one_setOfSub_perBinder :::= variableSubs
+                            allSubsPerBinder ::= one_setOfSub_perBinder
+                          }
+                        })
+                      }
+
+                      //if Nil then it unified but generated nothing else
+                      if (result == Nil) {
+                        allSubsPerBinder ::= List(l -> binder)
+                      }
+
+                      val next = SIM(rest,0)
+                      var appended: List[List[(Var, Formula)]] = Nil
+                      if(next == Nil){ //succeeded but nothing generated
+                        appended = allSubsPerBinder
+                      }else if(next == null){ //failed, since all should unify, none of the subs holds anymore
+                        appended = Nil
+                      }else{
+                        appended = allSubsPerBinder.flatMap(x => next.map(y => x:::y))  //create all the possible pairs
+                      }
+
+                      results_for_all_binders :::= appended
+                    })
+                    if(results_for_all_binders == Nil){
+                      null
+                    }else {
+                      results_for_all_binders.distinct
+                    }
+                  }
+
+                }
+                case (l : Var, r : Var) => {
+
+                  //copy paste the code form above, change some stuff (okay I could build a function)
+
+                  if(l.inftype ==null || r.inftype==null){
+                    throw new Error("Variables have to be strongly typed!")
+                  }
+                  val binders = gbinding(Var(r.name,r.inftype), l.inftype, (left.bound ::: left.free ::: right.bound ::: right.free).diff(List(r)))
+
+                  //for each binder recursively get the substitutions (binders) in lower level
+                  //apply the substitutions to the binder from which they were generated
+                  //check if we HAVE TO unify other pairs, if not return the substitutions(binders) up in the tree
+                  //the reason I am using a list of lists is that one binder can have multiple substitutions to be made in order to solve it
+                  //in other words in that binder we generated more than one variable
+
+
+
+                  //if there are no binders that can be generated then it can't be unified. return null for failure
+                  // we don't care if there is something in the rest because if there is, it is an AND branch.
+                  if(binders == null || binders.size == 0) {
+                    null
+                  }else {
+                    var one_setOfSub_perBinder : List[(Var,Formula)] = Nil
+                    var allSubsPerBinder: List[List[(Var, Formula)]] = Nil
+                    var results_for_all_binders : List[List[(Var,Formula)]] = Nil
+
+                    binders.foreach(binder => {
+                      val newleft = betanfRecursive(substitute(binder, l, left))
+
+                      //find the substitutions by replacing them recursively
+                      val result = SIM((newleft, right) :: Nil, 0)
+
+                      //did it fail?
+                      //we also need to check if it returned Nil
+                      if (result != null) {
+
+                        //if not then get each set of substitution for the variables generated in the binder and apply them to solve the binder
+                        result.foreach(set_of_sub => {
+                          if (set_of_sub != null) {
+                            var onePossibleBinder: Formula = binder
+                            var variableSubs: List[(Var, Formula)] = Nil
+                            set_of_sub.foreach({
+                              case (varib, subst) => {
+                                if (onePossibleBinder.free.contains(varib)) {
+                                  onePossibleBinder = substitute(subst, varib, onePossibleBinder)
+                                } else {
+                                  variableSubs ::= (varib, subst)
+                                }
+                              }
+                            })
+                            //the head -> binder should be added to the results
+                            one_setOfSub_perBinder ::= (l -> betanfRecursive(onePossibleBinder))
+                            one_setOfSub_perBinder :::= variableSubs
+                            allSubsPerBinder ::= one_setOfSub_perBinder
+                          }
+                        })
+                      }
+
+                      //if Nil then it unified but generated nothing else
+                      if (result == Nil) {
+                        allSubsPerBinder ::= List(l -> binder)
+                      }
+
+                      val next = SIM(rest,0)
+
+                      var appended = allSubsPerBinder.flatMap(x => next.map(y => x:::y))
+                      if(next == Nil){
+                        appended = allSubsPerBinder
+                      }else if(next == null){
+                        appended = Nil
+                      }
+
+                      results_for_all_binders :::= appended
+                    })
+                    if(results_for_all_binders == Nil){
+                      null
+                    }else {
+                      results_for_all_binders.distinct
+                    }
+                  }
+
+                }
+                case _ => SIM((right,left) :: rest, areWeDone+1)
+              }
+            }else {
+              SIM(rest :+(left, right), areWeDone + 1)
+            }
+          }
+        }
+        case (left, right : Apply) :: rest => {
+          SIM((right,left)::rest, areWeDone)
         }
         // if none of the cases worked out, try to apply the rules on the rest
         // but remember how many times we did no work
-        case a :: b => SIM(b ::: List(a), areWeDone + 1, binderacc)
+        case a :: b => SIM(b ::: List(a), areWeDone + 1)
         case Nil => {
-          binderacc
+          Nil
         }
       }
 
     }
 
 
-    SIM(List((left,right)),0, Nil)
+    SIM(List((left,right)),0)
   }
 
   case class Equals(left : Formula, right : Formula) extends Formula{
@@ -1054,7 +1146,7 @@ object LambdaManipulations{
 
 
   def ellipsis() = {
-    val love = Apply(Var("love", E->:E), Apply(Var("wife_of", E->:E),Const("Peter",E)))
+    val love = Apply(Apply(Var("love", Arrow(E, Arrow(E, E))), Const("peter", E)), Apply(Var("wife_of", Arrow(E, E)), Const("peter", E)))
     val peter = Apply(Var("P", E->:E),Const("Peter",E))
     val john = Apply(Var("P", E->:E),Const("John",E))
 
@@ -1062,15 +1154,17 @@ object LambdaManipulations{
     if(unifiers.length < 1){
       throw new Error("Error during unification")
     }
-    unifiers(0).foreach({case(x,y) => println(substitute(y,x,john))})
+    println(unifiers)
+    println(unifiers.size)
+    //unifiers.foreach(uni => uni.foreach{case(x,y) => println(substitute(y,x,john))})
   }
 
   //betanf doesn't work properly
   def churcheval(formula : Formula) = {
 
-    var last = betanf(formula)
-    while(last != betanf(last)){
-      last = betanf(last)
+    var last = normalize(formula)
+    while(last != normalize(last)){
+      last = normalize(last)
     }
     last
   }
@@ -1133,12 +1227,24 @@ object LambdaManipulations{
 //    println(churchtono(churcheval(churchexp(expr5))))
 
 
-//    ellipsis()
+//    println(higherOrderUnification(Apply(Var("Q",E->:E),Var("J",E)),Var("F",E)))
 
-    println(higherOrderUnification(Apply(Var("Q", E->: E), Var("j",E)), Apply(Apply(Var("l",E->:E->:E),Var("j",E)), Apply(Var("w", E->:E),Var("j",E)))))
+//    val expr5 = Plus(Minus(Num(4),Num(3)),Num(5))
+//    println(churchexp(expr5))
+//    println(churchtono(churcheval(churchexp(expr5))))
+
+    ellipsis()
+
+    val l1 = List(List(1,2,3,4),List(1,2,3,4,5))
+    val l2 = List(List(11,121), List(13,169), List(134,168))
+
+    println(l1.flatMap(x => l2.map(y => x:::y)))
+    println(higherOrderUnification(Apply(Var("B",E->:E),Var("j",E)),Var("j",E)))
 
 
   }
+
+  //think twice before starting to fix any bugs though.
 
 }
 
