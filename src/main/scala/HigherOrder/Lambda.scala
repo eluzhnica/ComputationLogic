@@ -1515,7 +1515,7 @@ object LambdaManipulations {
       }
 
 
-      //CHANGED FROM HOU.
+      //CHANGED FROM HOU. RECURSING BACK RULE TO ELIMINATE NEG(NEG(B)) = B kind of terms.
       if (areWeDone - 2 > tobeUni.size) {
         if(isRecursingBack){
           return null
