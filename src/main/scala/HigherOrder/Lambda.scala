@@ -1,5 +1,7 @@
 package main.scala.HigherOrder
 
+import scala.collection.immutable
+import scala.util.control.Breaks._
 /**
  * Created by enxhi on 10/25/14.
  * This IS the version you should submit, not the GIT one
@@ -97,7 +99,7 @@ case class Lambda(variable: Var, varTpe: Type, form: Formula) extends Formula {
             t.inftype = vartype.inftype
           }
         }
-        case c: Const =>
+        case _ =>
       }
     }
 
@@ -121,16 +123,50 @@ case class Forall( form : Lambda) extends Formula{
   def constants = form.constants
   def free = form.free
   def bound = form.bound
-  def replace(variable : Var, formula : Formula) = Forall(form.replace(variable, formula))
-  def rename(variable: Var, renamed: Var) = Forall(form.rename(variable,renamed))
+  def replace(variable : Var, formula : Formula) = Forall(form.replace(variable, formula) match {case a : Lambda => a})
+  def rename(variable: Var, renamed: Var) = Forall(form.rename(variable,renamed) match {case a: Lambda => a})
 }
 case class Exists(form : Lambda) extends Formula{
   def constants = form.constants
   def free = form.free
   def bound = form.bound
-  def replace(variable : Var, formula : Formula) = Forall(form.replace(variable, formula))
-  def rename(variable: Var, renamed: Var) = Forall(form.rename(variable,renamed))
+  def replace(variable : Var, formula : Formula) = Exists(form.replace(variable, formula) match {case a : Lambda => a})
+  def rename(variable: Var, renamed: Var) = Exists(form.rename(variable,renamed) match {case a: Lambda => a})
 }
+
+case class Disj(l : Formula, r : Formula) extends Formula{
+  def constants = l.constants ::: r.constants
+  def free = l.free ::: r.free
+  def bound = l.bound ::: r.bound
+  def replace(variable : Var, formula : Formula) = Disj(l.replace(variable, formula), r.replace(variable, formula))
+  def rename(variable: Var, renamed: Var) = Disj(l.rename(variable,renamed),r.rename(variable,renamed))
+}
+
+case class Conj(l : Formula, r : Formula) extends Formula{
+  def constants = l.constants ::: r.constants
+  def free = l.free ::: r.free
+  def bound = l.bound ::: r.bound
+  def replace(variable : Var, formula : Formula) = Conj(l.replace(variable, formula), r.replace(variable, formula))
+  def rename(variable: Var, renamed: Var) = Conj(l.rename(variable,renamed),r.rename(variable,renamed))
+}
+
+case class Equal(l : Formula, r : Formula) extends Formula{
+  def constants = l.constants ::: r.constants
+  def free = l.free ::: r.free
+  def bound = l.bound ::: r.bound
+  def replace(variable : Var, formula : Formula) = Equal(l.replace(variable, formula), r.replace(variable, formula))
+  def rename(variable: Var, renamed: Var) = Equal(l.rename(variable,renamed),r.rename(variable,renamed))
+}
+
+case class Neg(form : Formula) extends Formula{
+  def constants = form.constants
+  def free = form.free
+  def bound = form.bound
+  def replace(variable : Var, formula : Formula) = Neg(form.replace(variable, formula))
+  def rename(variable: Var, renamed: Var) = Neg(form.rename(variable,renamed))
+}
+
+
 
 object LambdaManipulations {
 
@@ -203,6 +239,15 @@ object LambdaManipulations {
         case Apply(pred, formula) => {
           Apply(subst(sub, tobesub, pred, bound), subst(sub, tobesub, formula, bound))
         }
+        case Equal(left,right) =>{
+          Equal(subst(sub,tobesub,left,bound), subst(sub,tobesub,right,bound))
+        }
+        case Forall(form) => {
+          Forall(subst(sub,tobesub,form,bound) match {case a : Lambda => a})
+        }
+        case Exists(form) => {
+          Exists(subst(sub,tobesub,form,bound) match {case a : Lambda => a})
+        }
         case Lambda(variable, tpe, body) => {
           if (tobesub.name == variable.name /*&& variable.inftype == tobesub.inftype*/ ) {
             body //this was described in the hint of the problem
@@ -215,6 +260,15 @@ object LambdaManipulations {
           } else {
             Lambda(variable, tpe, subst(sub, tobesub, body, bound))
           }
+        }
+        case Neg(form) =>{
+          Neg(subst(sub,tobesub,form,bound))
+        }
+        case Conj(left,right) =>{
+          Conj(subst(sub,tobesub,left,bound), subst(sub,tobesub,right,bound))
+        }
+        case Disj(left,right) =>{
+          Disj(subst(sub,tobesub,left,bound), subst(sub,tobesub,right,bound))
         }
       }
     }
@@ -288,6 +342,24 @@ object LambdaManipulations {
         }
         case t: Const => t
         case v: Var => v
+        case Forall(form) => {
+          Forall(betanfRoutine(form) match { case a : Lambda => a})
+        }
+        case Exists(form) => {
+          Exists(betanfRoutine(form) match { case a : Lambda => a})
+        }
+        case Equal(left,right) => {
+          Equal(betanfRoutine(left), betanfRoutine(right))
+        }
+        case Neg(form) =>{
+          Neg(betanfRoutine(form))
+        }
+        case Conj(left,right) =>{
+          Conj(betanfRoutine(left), betanfRoutine(right))
+        }
+        case Disj(left,right) =>{
+          Disj(betanfRoutine(left), betanfRoutine(right))
+        }
       }
     }
 
@@ -986,9 +1058,7 @@ object LambdaManipulations {
         }
         //if the head of the applications match use the decompose case
         case (left: Apply, right: Apply) :: rest if (left.pred == right.pred) => {
-
           SIM((left.form, right.form) :: rest, 0, binderacc, ff)
-
         }
 
         case (left: Var, right) :: rest if (elimConditionCheck((left, right) :: rest, skolems)) => {
@@ -1110,22 +1180,6 @@ object LambdaManipulations {
     SIM(List((left, right)), 0, Nil, Nil)
   }
 
-    case class Equals(left: Formula, right: Formula) extends Formula {
-      //  def checkVariableTypeMatch(variable : Var) : Boolean
-      override def free: List[Var] = null
-
-      override def rename(variable: Var, renamed: Var): Formula = null
-
-      override def bound: List[Var] = null
-
-      override def replace(variable: Var, formula: Formula): Formula = null
-
-      override def constants: List[Const] = null
-
-      override def toString = left.toString + "=" + right.toString
-    }
-
-
     abstract class ArithExp {
       def toNum: Int
     }
@@ -1197,7 +1251,7 @@ object LambdaManipulations {
       val left = generatePlus(m, x)
       val right = n
 
-      Equals(left, right)
+      Equal(left, right)
     }
 
 
@@ -1206,7 +1260,7 @@ object LambdaManipulations {
       val left = generateTimes(m, x)
       val right = n
 
-      Equals(left, right)
+      Equal(left, right)
 
     }
 
@@ -1216,7 +1270,7 @@ object LambdaManipulations {
       val left = generateExp(x, m)
       val right = n
 
-      Equals(left, right)
+      Equal(left, right)
     }
 
     def churchexp(exp: ArithExp): Formula = {
@@ -1310,7 +1364,7 @@ object LambdaManipulations {
           case Lambda(v, tp, form1) => {
             Lambda(v, tp, betanfRoutine(form1))
           }
-          case Equals(l, r) => {
+          case Equal(l, r) => {
             val solved = higherOrderUnification(l, r)
             var result: Formula = l
             if (solved.length == 0) {
@@ -1370,114 +1424,27 @@ object LambdaManipulations {
 
   def generate_var(tpe : Type) : Var = {
     //to be impl
-    return null;
+    return Var(generateString(2),tpe)
 
   }
 
-  def generate_sk(formula : Formula) : Formula = {
-    //to be implemented
-    return null;
+  def generate_sk(formula : Lambda) : Formula = {
+    //to be
+    val free = formula.free
+    var result : Formula = Const(generateString(2),formula.varTpe)
+
+    free.foreach(x => result = Apply(result, generate_var(x.tpe)))
+    result
   }
 
-  def higher_order_prover(pairs : List[(Formula,Boolean)]) : Boolean = {
-    pairs match {
-      case h::tl =>{
-        h match{
-          case (Forall(lambda),bool) =>{
-            if(bool){
-              val newterm = Apply(lambda,generate_var(lambda.varTpe))
-              return higher_order_prover((betanfRecursive(newterm),true)::tl)
-            }else{
-              val newterm = Apply(lambda,generate_sk(lambda))
-              return higher_order_prover((betanfRecursive(newterm),false) :: tl)
-            }
-          }
-          case Exists(lambda) =>{
-
-          }
-
-        }
-      }
-      case Nil =>{
-
-      }
-    }
-  }
-
-    def main(args: Array[String]): Unit = {
-      //    val left = Lambda(Var("X"), E,  Var("X"))
-      //    val right = Lambda( Var("Y"), E, Var("Z", E))
-      //
-      //    val left1 = Lambda( Var("X"), E->:E, Apply(Var("X"),Const("a",E)))
-      //    val right1 = Const("f", (E ->: E) ->: E)
-      //
-      //
-      //    println(Simplification(left,right))
-      //    println(Simplification(left1,right1))
-      //
-      //    val head = Var("k", T ->: T->: E)
-      //    val tpe = T ->: E ->: E
-      //
-      //    val left2 = Lambda(Var("X"),E->: E ->:E, Lambda(Var("Y"), E->:E, Apply(Var("Z"),Var("K"))))
-      //    val right2 = Lambda(Var("A"),E->: E ->:E, Lambda(Var("B"), E->:E, Apply(Var("Z"),Var("F1"))))
-      //
-      //    val left3 = Lambda(Var("X"),E->: E ->:E, Lambda(Var("Y"), E->:E, Apply(Var("Z"),Var("K"))))
-      //    val right3 = Apply(Var("X"),Apply(Var("Z"), Apply(Var("F"),Var("E1"))))
-      //
-      //    println(Simplification(left2,right2))
-      //    println(Simplification(left3,right3))
-      //    println(gbinding(head,tpe, List(Var("K"))))
 
 
-      println(churchnum(1))
-      println(churchnum(0))
-      println(churchnum(5))
-
-      println(churchtono(churchnum(5)))
-      println(churchtono(churchnum(0)))
-      println(churchtono(churchnum(1)))
-      println(churchtono(churchnum(13)))
-
-
-      //examples for Problem 2
-          val expr1 = Plus(Num(4), Num(14))
-          val expr2 = Times(Num(22),Num(3))
-          val expr3 = Plus(expr1,Num(5))
-          val expr4 = Exp(Num(4),Num(5))
-          val expr5 = Plus(expr4,expr3)
-
-          println(expr1)
-          println(churchtono(churcheval(churchexp(expr1))))
-
-          println(expr2)
-          println(churchtono(churcheval(churchexp(expr2))))
-
-          println(expr3)
-          println(churchtono(churcheval(churchexp(expr3))))
-
-          println(expr4)
-          println(churchtono(churcheval(churchexp(expr4))))
-
-          println(expr5)
-          println(churchtono(churcheval(churchexp(expr5))))
-
-
-      //    println(higherOrderUnification(Apply(Var("Q",E->:E),Var("J",E)),Var("F",E)))
-
-      //THESE DON'T WORK BECAUSE OF THE UNIFICATION.
-//      val expr5 = Plus(Minus(Num(4),Num(3)),Num(5))
-//      println(churchexp(expr5))
-//      println(churchtono(churcheval(churchexp(expr5))))
-
-      ellipsis()
-
-      println(higherOrderUnification(Apply(Var("B", E ->: E), Var("j", E)), Var("j", E)))
-
-
-    }
-
-
-  def higherOrderUnification(left: Formula, right: Formula): List[(Var, Formula)] = {
+  /**
+   *
+   * @param formula
+   * @return true - if something can be made true else false.
+   */
+  def higherOrderProver(formula : Formula): Boolean = {
 
     var skolems: List[Const] = Nil
 
@@ -1511,13 +1478,14 @@ object LambdaManipulations {
 
 
     /**
+     * Most of the parts here are reused from HOU. The only changes are ORing the cases rather than ANDing in ff fr.
      *
      * @param tobeUni - pairs to be unified (simplifed)
      * @param areWeDone - counts the number of circulations because of no case match
      * @return - the simplified pairs
      */
     def SIM(tobeUni: List[(Formula, Formula)], areWeDone: Integer, binderacc: List[(Var, Formula)]): List[(Var, Formula)] = {
-
+      // REUSED FROM HOU
       val newUni = tobeUni.filterNot({
         case (x: Var, y: Var) => (x == y)
         case _ => false
@@ -1539,15 +1507,14 @@ object LambdaManipulations {
           case(v : Var,s) => (x,substitute(s,v,y))
           case(s,v:Var) => (x,substitute(s,v,y))
         })})
-//        if(newUni == Nil){
-//          return binderacc
-//        }
-        return null
+        if(newUni == Nil){
+          return binderacc
+        }
+        return newBinderacc
       }
 
       if (areWeDone - 2 > tobeUni.size) {
-
-        return binderacc
+        return null
       }
 
       tobeUni match {
@@ -1608,51 +1575,61 @@ object LambdaManipulations {
 
           // if nothing was substituted then increase the counter
           if (modified)
-            SIM(newrest :+(left, right), 0, binderacc.distinct) //ndaj recursionet
+            SIM(newrest :+(left, right), 0, binderacc.distinct)
           else
             SIM(newrest :+(left, right), areWeDone + 1, binderacc.distinct)
 
         }
         case (left: Apply, right) :: rest => {
           //check if the decomposition matches on head
-          val matchingPairs = getDecomposeMatch(left, right)
+          val matchingPairs: List[(Formula, Formula)] = getDecomposeMatch(left, right)
+          var result : List[(Var, Formula)] = Nil
           if (matchingPairs != null) {
-            SIM(matchingPairs ::: rest, 0, binderacc)
+            var partial_result : List[(Var,Formula)] = null
+
+            for(pair <- matchingPairs){
+              var subs_pair = pair
+
+              //try to substitute whatever resolved in another branch.
+              if(partial_result != null){
+                partial_result.foreach(x => {
+                  subs_pair = (pair._1.replace(x._1, x._2), pair._2.replace(x._1, x._2))
+                })
+              }
+
+              partial_result = SIM(List(subs_pair),0,binderacc)
+
+              if(partial_result == null){
+                return null
+              }else{
+                result :::= partial_result
+              }
+            }
+
+            if(result == Nil) null else result
+
           } else {
 
+            //REUSED FROM HOU
             val leftHead = getApplicationHead(left)
             val rightHead = getApplicationHead(right)
 
             //if there is no proper construction of nested applications I will get null
             if (leftHead != null && rightHead != null) {
-
               (leftHead, rightHead) match {
                 case (l: Var, r: Const) =>
 
-                  if (l.inftype == null || r.tp == null) {
+                  if(l.inftype == null || r.tp == null) {
                     throw new Error("Variables have to be strongly typed!")
                   }
                   val binders = gbinding(Var(r.name, r.tp), l.inftype, Nil)
-                  //                    println(binders)
 
-                  //for each binder recursively get the substitutions (binders) in lower level
-                  //apply the substitutions to the binder from which they were generated
-                  //check if we HAVE TO unify other pairs, if not return the substitutions(binders) up in the tree
-                  //the reason I am using a list of lists is that one binder can have multiple substitutions to be made in order to solve it
-                  //in other words in that binder we generated more than one variable
-
-
-                  //if there are no binders that can be generated then it can't be unified. return null for failure
-                  // we don't care if there is something in the rest because if there is, it is an AND branch.
-
-
-                  //mjafton njo me funks.
                   if (binders == null || binders.size == 0) {
                     null
                   } else {
                     var result: List[(Var, Formula)] = Nil
 
-                    binders.foreach(binder => {
+                    for(binder <- binders){
                       val newleft: Formula = betanfRecursive(substitute(binder, l, left))
 
                       var newBinderacc : List[(Var,Formula)] = Nil
@@ -1669,13 +1646,14 @@ object LambdaManipulations {
                       //we also need to check if it returned Nil
                       if (res != null) {
                         result :::= res
+                        break
                       }
-                    })
+                    }
 
                     result.distinct
                   }
                 case (l: Var, r: Var) => {
-
+                  //REUSED FROM HOU
                   if (l.inftype == null || r.inftype == null) {
                     throw new Error("Variables have to be strongly typed!")
                   }
@@ -1691,14 +1669,13 @@ object LambdaManipulations {
                   //if there are no binders that can be generated then it can't be unified. return null for failure
                   // we don't care if there is something in the rest because if there is, it is an AND branch.
 
-                  //                    println(binders)
-
                   if (binders == null || binders.size == 0) {
                     null
                   } else {
                     var result: List[(Var, Formula)] = Nil
 
-                    binders.foreach(binder => {
+                    // CHANGED FROM HOU: If one binder succedes we don't try the others.
+                    for(binder <- binders){
                       val newleft: Formula = betanfRecursive(substitute(binder, l, left))
 
                       var newBinderacc : List[(Var,Formula)] = Nil
@@ -1716,24 +1693,57 @@ object LambdaManipulations {
                       //we also need to check if it returned Nil
                       if (res != null) {
                         result :::= res
+                        break
                       }
-                    })
+                    }
 
                     result.distinct
                   }
                 }
+                  // REUSED FROM HOU
                 case _ => SIM((right, left) :: rest, areWeDone + 1, binderacc.distinct)
               }
             } else {
+              // REUSED FROM HOU
               SIM(rest :+(left, right), areWeDone + 1, binderacc.distinct)
             }
           }
         }
+        // REUSED FROM HOU
         case (left, right: Apply) :: rest => {
           SIM((right, left) :: rest, areWeDone, binderacc.distinct)
         }
-        // if none of the cases worked out, try to apply the rules on the rest
-        // but remember how many times we did no work
+        case (left : Equal, right : Equal) :: rest =>{
+          val first = SIM(List(left.l -> right.l), 0, binderacc)
+
+          var subs_left = left.r
+          var subs_right = right.r
+
+          first.foreach(x => {
+            subs_left = subs_left.replace(x._1, x._2)
+            subs_right = subs_right.replace(x._1, x._2)
+          })
+
+          val second = SIM(List(subs_left -> subs_right), 0, binderacc)
+
+          if(second == null || first == null){
+            val result = SIM(Equal(left.r,left.l) -> right :: rest, areWeDone, binderacc)
+            if(result == null){
+              null
+            }else{
+              result
+            }
+          }else{
+            val result = SIM(rest, 0, binderacc)
+            if(result != null){
+              first ::: second ::: result
+            }else{
+              null
+            }
+          }
+
+        }
+        // REUSED FROM HOU
         case a :: b => SIM(b ::: List(a), areWeDone + 1, binderacc.distinct)
         case Nil => {
           Nil
@@ -1743,15 +1753,112 @@ object LambdaManipulations {
     }
 
 
-    SIM(List((left, right)), 0, Nil)
+    def produce_pairs(expr : (Formula,Boolean), acc : List[(Formula,Boolean)]) : List[List[(Formula,Boolean)]] = {
+      expr match{
+        case (Forall(lambda),bool) =>{
+          if(bool){
+            val newterm = Apply(lambda,generate_var(lambda.varTpe))
+            produce_pairs((betanfRecursive(newterm),true),acc)
+          }else{
+            val newterm = Apply(lambda,generate_sk(lambda))
+            produce_pairs((betanfRecursive(newterm),false),acc)
+          }
+        }
+        case (Disj(left,right),bool) =>{
+          if(bool){
+            (produce_pairs((left,true), acc) ::: produce_pairs((right,true), acc)).distinct
+          }else{
+            //get the pairs that can be formed from one side and from the other
+            //then create all possible branches n*n
+            val pair1 = produce_pairs((left,false),acc)
+            val pair2 = produce_pairs((right,false), acc)
+            val branches : List[List[(Formula,Boolean)]] = pair1.flatMap(x => pair2.map(y => x:::y))
+            branches.distinct
+          }
+        }
+        case (Conj(left,right),bool) =>{
+          if(bool){
+            val pair1 = produce_pairs((left,true),acc)
+            val pair2 = produce_pairs((right,true), acc)
+            val branches : List[List[(Formula,Boolean)]] = pair1.flatMap(x => pair2.map(y => x:::y))
+            branches.distinct
+          }else{
+            (produce_pairs((left,true), acc) ::: produce_pairs((right,true), acc)).distinct
+          }
+        }
+        case (Neg(formula),bool) =>{
+          produce_pairs((formula,!bool),acc)
+        }
+        case _ =>{
+          List(expr::acc)
+        }
+      }
+
+    }
+
+    def add_axiom(tuples: List[List[(Formula, Boolean)]], pairs : List[List[(Formula, Boolean)]]): List[List[(Formula, Boolean)]] ={
+      tuples.flatMap(x => pairs.map(y => y:::x))
+    }
+
+
+    def cut_branches(branches : List[List[(Formula,Boolean)]], substitutions : List[(Var,Formula)]) : Boolean = {
+      branches match{
+        case head::tl => {
+          for(term1 <- head){
+            for(term2 <- head){
+              if(term1._2 != term2._2){
+                var subs_term1 : Formula = term1._1
+                var subs_term2 : Formula = term2._1
+                substitutions.foreach(subs => {
+                  subs_term1 = term1._1.replace(subs._1, subs._2)
+                  subs_term2 = term2._1.replace(subs._1, subs._2)
+                })
+
+                val subst = SIM(List(subs_term1 -> subs_term2), 0, Nil)
+
+                if(subst != null){
+                  val next = cut_branches(tl,subst)
+                  if(next){
+                    return true
+                  }
+                }
+              }
+            }
+          }
+
+          false
+        }
+        case Nil => true
+      }
+    }
+
+    var pairs = produce_pairs((formula,false), Nil)
+
+    val axiom1 = Equal(Var("X", E), Apply(Const("s", E->:E),Var("X",E)))
+    val impl = Forall(Lambda(Var("N", E), E, Equal(Apply(Var("H",E->:E),Var("N",E)), Apply(Var("K", E->:E), Var("N",E)))))
+    val axiom2 = Disj(Neg(Equal(Var("H", E->:E), Var("K",E->:E))), impl)
+
+    pairs = add_axiom(produce_pairs(axiom1 -> false, Nil), pairs)
+    pairs = add_axiom(produce_pairs(axiom2 -> true, Nil), pairs)
+
+    cut_branches(pairs, Nil)
+
+
+
+  }
+
+
+  def main(args: Array[String]): Unit = {
+    val left = Conj(Const("B",E),Neg(Const("B",E)))
+    println(higherOrderProver(left))
+
+
+    val cantor = Forall(Lambda(Var("F"), E->:E ->: E,Neg(Forall(Lambda(Var("G"), E->:E, Neg(Forall(Lambda(Var("J"), E, Neg(Equal(Apply(Var("F", E->:E->:E), Var("J", E)), Var("G", E->:E)))))))))))
+
+    println(higherOrderProver(cantor))
   }
 
 }
-  //the higher order unification doesn't still work properly (but at least unifies in some cases) because of the general binders and substitution
-// which is the reason that church numerals with minus... of part 2 don't work
-  //think twice before starting to fix any bugs though.
-
-
 
 
 
