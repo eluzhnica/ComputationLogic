@@ -1532,11 +1532,12 @@ object LambdaManipulations {
             val right_prod = produce_pairs((right,false), Nil)
 
             if( (left_prod.length == 1 && left_prod.head.length == 1 && left_prod.head.head._1 == left)
-            || (right_prod.length == 1 && right_prod.head.length == 1 && right_prod.head.head._1 == right)
+            && (right_prod.length == 1 && right_prod.head.length == 1 && right_prod.head.head._1 == right)
             ){
               pairs_change1 = false
               Nil
             }else{
+              pairs_change1 = true
               (left_prod ::: right_prod).flatten
             }
           }
@@ -1551,11 +1552,12 @@ object LambdaManipulations {
             val right_prod = produce_pairs((right,true), Nil)
 
             if( (left_prod.length == 1 && left_prod.head.length == 1 && left_prod.head.head._1 == left)
-              || (right_prod.length == 1 && right_prod.head.length == 1 && right_prod.head.head._1 == right)
+              && (right_prod.length == 1 && right_prod.head.length == 1 && right_prod.head.head._1 == right)
             ){
               pairs_change2 = false
               Nil
             }else{
+              pairs_change2 = true
               (left_prod ::: right_prod).flatten
             }
           }
