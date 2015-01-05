@@ -1518,24 +1518,53 @@ object LambdaManipulations {
 
 
       //CHANGED FROM HOU. RECURSING BACK RULE TO ELIMINATE NEG(NEG(B)) = B kind of terms.
+      //This is applied everytime we can produce something new out of this rule, when we get the same term we try to unify and stop.
       if (areWeDone - 2 > tobeUni.size+1) {
         if(isRecursingBack){
           return null
         }
 
 
+        var pairs_change1 = true
         val pairs1: List[List[(Formula, Boolean)]] = tobeUni.map({
-          case (left,right) => (produce_pairs((left,true), Nil) ::: produce_pairs((right,false), Nil)).flatten
+          case (left,right) =>{
+            val left_prod = produce_pairs((left,true), Nil)
+            val right_prod = produce_pairs((right,false), Nil)
+
+            if( (left_prod.length == 1 && left_prod.head.length == 1 && left_prod.head.head._1 == left)
+            || (right_prod.length == 1 && right_prod.head.length == 1 && right_prod.head.head._1 == right)
+            ){
+              pairs_change1 = false
+              Nil
+            }else{
+              (left_prod ::: right_prod).flatten
+            }
+          }
         })
 
+
+
+        var pairs_change2 = true
         val pairs2: List[List[(Formula, Boolean)]] = tobeUni.map({
-          case (left,right) => (produce_pairs((left,false), Nil) ::: produce_pairs((right,true), Nil)).flatten
+          case (left,right) =>{
+            val left_prod = produce_pairs((left,false), Nil)
+            val right_prod = produce_pairs((right,true), Nil)
+
+            if( (left_prod.length == 1 && left_prod.head.length == 1 && left_prod.head.head._1 == left)
+              || (right_prod.length == 1 && right_prod.head.length == 1 && right_prod.head.head._1 == right)
+            ){
+              pairs_change2 = false
+              Nil
+            }else{
+              (left_prod ::: right_prod).flatten
+            }
+          }
         })
 
 //        println(pairs1)
 //        println(pairs2)
-        val result1 = cut_branches(pairs1, Nil, true)
-        val result2 = cut_branches(pairs2, Nil, true)
+        val result1 = cut_branches(pairs1, Nil, !pairs_change1)
+        val result2 = cut_branches(pairs2, Nil, !pairs_change2)
 
 //        println("r1 "+ result1 + " r2 " + result2)
 
@@ -1882,6 +1911,7 @@ object LambdaManipulations {
   def main(args: Array[String]): Unit = {
     val left = Conj(Const("B",E),Neg(Const("B",E)))
     println(higherOrderProver(left))
+
 
     val cantor = Forall(Lambda(Var("F"), E->:E ->: E,Neg(Forall(Lambda(Var("G"), E->:E, Neg(Forall(Lambda(Var("J"), E, Neg(Equal(Apply(Var("F", E->:E->:E), Var("J", E)), Var("G", E->:E)))))))))))
     println(higherOrderProver(cantor))
