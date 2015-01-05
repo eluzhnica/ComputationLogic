@@ -1487,6 +1487,8 @@ object LambdaManipulations {
 
     def SIM(tobeUni: List[(Formula, Formula)], areWeDone: Integer, binderacc: List[(Var, Formula)], isRecursingBack : Boolean): List[(Var, Formula)] = {
       // REUSED FROM HOU
+
+//      println(tobeUni)
       val newUni = tobeUni.filterNot({
         case (x: Var, y: Var) => (x == y)
         case _ => false
@@ -1516,26 +1518,31 @@ object LambdaManipulations {
 
 
       //CHANGED FROM HOU. RECURSING BACK RULE TO ELIMINATE NEG(NEG(B)) = B kind of terms.
-      if (areWeDone - 2 > tobeUni.size) {
+      if (areWeDone - 2 > tobeUni.size+1) {
         if(isRecursingBack){
           return null
         }
 
-        val pairs1 = tobeUni.flatMap({
-          case (left,right) => produce_pairs((left,true), Nil, true) ::: produce_pairs((right,false), Nil, true)
+
+        val pairs1: List[List[(Formula, Boolean)]] = tobeUni.map({
+          case (left,right) => (produce_pairs((left,true), Nil) ::: produce_pairs((right,false), Nil)).flatten
         })
 
-        val pairs2 = tobeUni.flatMap({
-          case (left,right) => produce_pairs((left,false), Nil, true) ::: produce_pairs((right,true), Nil, true)
+        val pairs2: List[List[(Formula, Boolean)]] = tobeUni.map({
+          case (left,right) => (produce_pairs((left,false), Nil) ::: produce_pairs((right,true), Nil)).flatten
         })
 
+//        println(pairs1)
+//        println(pairs2)
         val result1 = cut_branches(pairs1, Nil, true)
         val result2 = cut_branches(pairs2, Nil, true)
 
+//        println("r1 "+ result1 + " r2 " + result2)
+
         if(result1 && result2){
-           Nil
+           return Nil
         }else{
-          null
+          return null
         }
       }
 
@@ -1776,41 +1783,41 @@ object LambdaManipulations {
     }
 
 
-    def produce_pairs(expr : (Formula,Boolean), acc : List[(Formula,Boolean)], isRecursingBack : Boolean) : List[List[(Formula,Boolean)]] = {
+    def produce_pairs(expr : (Formula,Boolean), acc : List[(Formula,Boolean)]) : List[List[(Formula,Boolean)]] = {
       expr match{
         case (Forall(lambda),bool) =>{
           if(bool){
             val newterm = Apply(lambda,generate_var(lambda.varTpe))
-            produce_pairs((betanfRecursive(newterm),true),acc, isRecursingBack)
+            produce_pairs((betanfRecursive(newterm),true),acc)
           }else{
             val newterm = Apply(lambda,generate_sk(lambda))
-            produce_pairs((betanfRecursive(newterm),false),acc, isRecursingBack)
+            produce_pairs((betanfRecursive(newterm),false),acc)
           }
         }
         case (Disj(left,right),bool) =>{
           if(bool){
-            (produce_pairs((left,true), acc, isRecursingBack) ::: produce_pairs((right,true), acc, isRecursingBack)).distinct
+            (produce_pairs((left,true), acc) ::: produce_pairs((right,true), acc)).distinct
           }else{
             //get the pairs that can be formed from one side and from the other
             //then create all possible branches n*n
-            val pair1 = produce_pairs((left,false),acc, isRecursingBack)
-            val pair2 = produce_pairs((right,false), acc, isRecursingBack)
+            val pair1 = produce_pairs((left,false),acc)
+            val pair2 = produce_pairs((right,false), acc)
             val branches : List[List[(Formula,Boolean)]] = pair1.flatMap(x => pair2.map(y => x:::y))
             branches.distinct
           }
         }
         case (Conj(left,right),bool) =>{
           if(bool){
-            val pair1 = produce_pairs((left,true),acc, isRecursingBack)
-            val pair2 = produce_pairs((right,true), acc, isRecursingBack)
+            val pair1 = produce_pairs((left,true),acc)
+            val pair2 = produce_pairs((right,true), acc)
             val branches : List[List[(Formula,Boolean)]] = pair1.flatMap(x => pair2.map(y => x:::y))
             branches.distinct
           }else{
-            (produce_pairs((left,true), acc, isRecursingBack) ::: produce_pairs((right,true), acc, isRecursingBack)).distinct
+            (produce_pairs((left,true), acc) ::: produce_pairs((right,true), acc)).distinct
           }
         }
         case (Neg(formula),bool) =>{
-          produce_pairs((formula,!bool),acc, isRecursingBack)
+          produce_pairs((formula,!bool),acc)
         }
         case _ =>{
           List(expr::acc)
@@ -1838,6 +1845,7 @@ object LambdaManipulations {
                 })
 
                 val subst = SIM(List(subs_term1 -> subs_term2), 0, Nil, isRecursingBack)
+//                println(subst)
 
                 if(subst != null){
                   val next = cut_branches(tl,subst, isRecursingBack)
@@ -1855,16 +1863,16 @@ object LambdaManipulations {
       }
     }
 
-    var pairs = produce_pairs((formula,false), Nil, false)
+    var pairs = produce_pairs((formula,false), Nil)
 
     val axiom1 = Equal(Var("X", E), Apply(Const("s", E->:E),Var("X",E)))
     val impl = Forall(Lambda(Var("N", E), E, Equal(Apply(Var("H",E->:E),Var("N",E)), Apply(Var("K", E->:E), Var("N",E)))))
     val axiom2 = Disj(Neg(Equal(Var("H", E->:E), Var("K",E->:E))), impl)
 
-    pairs = add_axiom(produce_pairs(axiom1 -> false, Nil, false), pairs)
-    pairs = add_axiom(produce_pairs(axiom2 -> true, Nil,false), pairs)
+    pairs = add_axiom(produce_pairs(axiom1 -> false, Nil), pairs)
+    pairs = add_axiom(produce_pairs(axiom2 -> true, Nil), pairs)
 
-    cut_branches(pairs, Nil,false)
+    cut_branches(pairs, Nil, false)
 
 
 
@@ -1875,10 +1883,12 @@ object LambdaManipulations {
     val left = Conj(Const("B",E),Neg(Const("B",E)))
     println(higherOrderProver(left))
 
-
     val cantor = Forall(Lambda(Var("F"), E->:E ->: E,Neg(Forall(Lambda(Var("G"), E->:E, Neg(Forall(Lambda(Var("J"), E, Neg(Equal(Apply(Var("F", E->:E->:E), Var("J", E)), Var("G", E->:E)))))))))))
-
     println(higherOrderProver(cantor))
+
+    val fromSlide = Disj(Neg(Apply(Var("c", E->:E), Var("b", E))), Apply(Var("c", E->:E),Neg(Neg(Var("b", E)))))
+    println(higherOrderProver(fromSlide))
+
   }
 
 }
