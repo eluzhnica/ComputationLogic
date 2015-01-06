@@ -60,8 +60,8 @@ case class Var(name: String, tpe : Type = null) extends Formula {
   def free = List(this)
   def getType = inftype
   def bound = Nil
-  def replace(variable : Var, formula : Formula) = if(variable == this) formula else Var(name)
-  def rename(variable: Var, renamed: Var) = if (variable == this) renamed else Var(name)
+  def replace(variable : Var, formula : Formula) = if(variable == this) formula else Var(name,tpe)
+  def rename(variable: Var, renamed: Var) = if (variable == this) renamed else Var(name,tpe)
 
   override def toString = "V("+name+")"
 }
@@ -636,10 +636,13 @@ object LambdaManipulations {
    */
   def gbinding(head: Var, tpe: Type, avoid: List[Var]): List[Formula] = {
     //if the return types don't match there is noway to generate anything correct or if the type is base type
-    if (getReturnType(head.inftype) != getReturnType(tpe) || tpe == E || tpe == T) {
+    if (getReturnType(head.inftype) != getReturnType(tpe)) {
       return null
     }
 
+    if(tpe == E || tpe == T){
+      return List(generate_var(tpe))
+    }
     var application: Formula = head
 
     //avoid the head, don't capture it
@@ -1818,26 +1821,80 @@ object LambdaManipulations {
     }
 
 
-    def produce_pairs(expr : (Formula,Boolean), acc : List[(Formula,Boolean)]) : List[List[(Formula,Boolean)]] = {
+    def generateNegation(head : Var) : List[Formula] = {
+      val binder: List[Formula] = gbinding(head, getReturnType(head.tpe), Nil)
+
+      val negations = binder.map(x =>{
+        val app = getNonLambdaPart(x)
+        replaceNonLambdaPart(x, Neg(app)).replace(head,generate_var(head.tpe))
+
+       })
+
+      negations
+    }
+
+    def generateConj(head : Var) : List[Formula] = {
+      val binder: List[Formula] = gbinding(head, getReturnType(head.tpe), Nil)
+
+      val conj = binder.map(x => {
+        val app = getNonLambdaPart(x)
+        val left = app.replace(head,generate_var(head.tpe))
+        val right = app.replace(head,generate_var(head.tpe))
+        replaceNonLambdaPart(x,Conj(left,right))
+
+      })
+
+      conj
+    }
+
+    def generateForall(head : Var) : List[Formula] = {
+      val binder: List[Formula] = gbinding(head, getReturnType(head.tpe), Nil)
+
+      val conj = binder.map(x => {
+        val app = getNonLambdaPart(x)
+        val variable = generate_var(head.tpe)
+        replaceNonLambdaPart(x,Forall(Lambda(variable, head.tpe, Apply(app, variable))))
+      })
+
+      conj
+    }
+
+    def getNonLambdaPart(expr : Formula) : Formula = expr match{
+      case a : Lambda => getNonLambdaPart(a.form)
+      case a => a
+    }
+
+    def replaceNonLambdaPart(expr : Formula, rep : Formula) : Formula = expr match{
+      case Lambda(v,t,form) => Lambda(v,t,replaceNonLambdaPart(form, rep))
+      case _ => rep
+    }
+
+    def primitiveSubsCase(expr : Formula) : Option[Var] = expr match{
+      case a : Var => Some(a)
+      case Apply(left,right) => primitiveSubsCase(left)
+      case _ => None
+    }
+
+    def produce_pairs(expr : (Formula,Boolean), acc : List[(Formula,Boolean)], primitives : Boolean = false) : List[List[(Formula,Boolean)]] = {
       expr match{
         case (Forall(lambda),bool) =>{
           if(bool){
             val newterm = Apply(lambda,generate_var(lambda.varTpe))
-            produce_pairs((betanfRecursive(newterm),true),acc)
+            produce_pairs((betanfRecursive(newterm),true),acc, primitives)
           }else{
             val newterm = Apply(lambda,generate_sk(lambda))
-            produce_pairs((betanfRecursive(newterm),false),acc)
+            produce_pairs((betanfRecursive(newterm),false),acc, primitives)
           }
         }
         case (Disj(left,right),bool) =>{
           if(bool){
             //create two branches <=> two lists
-            (produce_pairs((left,true), acc) ::: produce_pairs((right,true), acc)).distinct
+            (produce_pairs((left,true), acc, primitives) ::: produce_pairs((right,true), acc, primitives)).distinct
           }else{
             //get the pairs that can be formed from one side and from the other
             //then append every branch from the pair1 to every branch from pair2 thus creating all possible branches
-            val pair1 = produce_pairs((left,false),acc)
-            val pair2 = produce_pairs((right,false), acc)
+            val pair1 = produce_pairs((left,false),acc, primitives)
+            val pair2 = produce_pairs((right,false), acc, primitives)
             val branches : List[List[(Formula,Boolean)]] = pair1.flatMap(x => pair2.map(y => x:::y))
             branches.distinct
           }
@@ -1846,16 +1903,35 @@ object LambdaManipulations {
         //analogically to Disj
         case (Conj(left,right),bool) =>{
           if(bool){
-            val pair1 = produce_pairs((left,true),acc)
-            val pair2 = produce_pairs((right,true), acc)
+            val pair1 = produce_pairs((left,true),acc, primitives)
+            val pair2 = produce_pairs((right,true), acc, primitives)
             val branches : List[List[(Formula,Boolean)]] = pair1.flatMap(x => pair2.map(y => x:::y))
             branches.distinct
           }else{
-            (produce_pairs((left,false), acc) ::: produce_pairs((right,false), acc)).distinct
+            (produce_pairs((left,false), acc, primitives) ::: produce_pairs((right,false), acc, primitives)).distinct
           }
         }
         case (Neg(formula),bool) =>{
-          produce_pairs((formula,!bool),acc)
+          produce_pairs((formula,!bool),acc, primitives)
+        }
+        case (_,bool) if(primitiveSubsCase(expr._1) != None && !primitives)=>{
+
+          // this part is based on the paper: Peter Andrews - On connections and Higher order Logic (AND89)
+          // PRIMITIVE SUBSTITUTIONS - there might be type mistakes when generating binders
+          val head = primitiveSubsCase(expr._1) match {case Some(a) => a}
+
+          val negation = generateNegation(head)
+          val and = generateConj(head)
+          val quant = generateForall(head)
+
+          //find all primitive subs and replace the head with them to produce other terms
+          val pairs = (negation:::and:::quant).map(term =>  expr._1.replace(head,term) -> bool)
+
+          val result: List[List[(Formula, Boolean)]] = pairs.flatMap(x => produce_pairs(x,acc,true))
+
+          produce_pairs(expr,acc,true).flatMap(x => result.map(y => x:::y))
+
+
         }
         case _ =>{
           List(expr::acc)
@@ -1919,19 +1995,21 @@ object LambdaManipulations {
 
 
   def main(args: Array[String]): Unit = {
-    val left = Conj(Const("B",E),Neg(Const("B",E)))
+    val left = Conj(Const("B",E),(Const("B",E)))
     println(higherOrderProver(left))
 
-    val form = Disj(Forall(Lambda(Var("C"),E, Var("C",E))),left)
+    val form = Conj(Forall(Lambda(Var("C"),E, Var("C",E))),left)
     println(higherOrderProver(form))
 
     val cantor = Forall(Lambda(Var("F"), E->:E ->: E,Neg(Forall(Lambda(Var("G"), E->:E, Neg(Forall(Lambda(Var("J"), E, Neg(Equal(Apply(Var("F", E->:E->:E), Var("J", E)), Var("G", E->:E)))))))))))
     println(higherOrderProver(cantor))
 
+    //recursing back test
     val fromSlide = Disj(Neg(Apply(Var("c", E->:E), Var("b", E))), Apply(Var("c", E->:E),Neg(Neg(Var("b", E)))))
     println(higherOrderProver(fromSlide))
 
-    val next = Neg(Forall(Lambda(Var("X"), E, Var("X",E))))
+    //primitive subs test
+    val next = Neg(Forall(Lambda(Var("X", E), E, Var("X",E))))
     println(higherOrderProver(next))
 
 
