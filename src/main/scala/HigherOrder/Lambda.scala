@@ -1501,6 +1501,10 @@ object LambdaManipulations {
 
       //are all the pairs distinct on variable part and are all the pairs x =? smth and smth doesnt contain skolems or x
       if (newUni == Nil || (vars.distinct.size == vars.size && newUni.forall({
+        case (x: Var, y: Equal) => false // NO NO SIR, NOWAY I AM UNIFING THIS
+        case (x: Equal, y: Var) => false
+        case (x: Const, y: Equal) => false
+        case (x: Equal, y: Const) => false // Same as first
         case (x: Var, y: Formula) => !y.free.contains(x) && y.constants.intersect(skolems) == Nil
         case (y: Formula, x: Var) => !y.free.contains(x) && y.constants.intersect(skolems) == Nil
         case (c1 : Const , c2 : Const ) => true
@@ -1827,16 +1831,19 @@ object LambdaManipulations {
         }
         case (Disj(left,right),bool) =>{
           if(bool){
+            //create two branches <=> two lists
             (produce_pairs((left,true), acc) ::: produce_pairs((right,true), acc)).distinct
           }else{
             //get the pairs that can be formed from one side and from the other
-            //then create all possible branches n*n
+            //then append every branch from the pair1 to every branch from pair2 thus creating all possible branches
             val pair1 = produce_pairs((left,false),acc)
             val pair2 = produce_pairs((right,false), acc)
             val branches : List[List[(Formula,Boolean)]] = pair1.flatMap(x => pair2.map(y => x:::y))
             branches.distinct
           }
         }
+
+        //analogically to Disj
         case (Conj(left,right),bool) =>{
           if(bool){
             val pair1 = produce_pairs((left,true),acc)
@@ -1844,7 +1851,7 @@ object LambdaManipulations {
             val branches : List[List[(Formula,Boolean)]] = pair1.flatMap(x => pair2.map(y => x:::y))
             branches.distinct
           }else{
-            (produce_pairs((left,true), acc) ::: produce_pairs((right,true), acc)).distinct
+            (produce_pairs((left,false), acc) ::: produce_pairs((right,false), acc)).distinct
           }
         }
         case (Neg(formula),bool) =>{
@@ -1875,6 +1882,7 @@ object LambdaManipulations {
                   subs_term2 = term2._1.replace(subs._1, subs._2)
                 })
 
+//                println(subs_term1 -> subs_term2)
                 val subst = SIM(List(subs_term1 -> subs_term2), 0, Nil, isRecursingBack)
 //                println(subst)
 
@@ -1902,10 +1910,10 @@ object LambdaManipulations {
 
     pairs = add_axiom(produce_pairs(axiom1 -> false, Nil), pairs)
     pairs = add_axiom(produce_pairs(axiom2 -> true, Nil), pairs)
+//    we can add other axioms as necessary (or all the ext. axioms), they need to be hardcoded here and added in this fashion
 
+//    println(pairs)
     cut_branches(pairs, Nil, false)
-
-
 
   }
 
@@ -1914,12 +1922,18 @@ object LambdaManipulations {
     val left = Conj(Const("B",E),Neg(Const("B",E)))
     println(higherOrderProver(left))
 
+    val form = Disj(Forall(Lambda(Var("C"),E, Var("C",E))),left)
+    println(higherOrderProver(form))
 
     val cantor = Forall(Lambda(Var("F"), E->:E ->: E,Neg(Forall(Lambda(Var("G"), E->:E, Neg(Forall(Lambda(Var("J"), E, Neg(Equal(Apply(Var("F", E->:E->:E), Var("J", E)), Var("G", E->:E)))))))))))
     println(higherOrderProver(cantor))
 
     val fromSlide = Disj(Neg(Apply(Var("c", E->:E), Var("b", E))), Apply(Var("c", E->:E),Neg(Neg(Var("b", E)))))
     println(higherOrderProver(fromSlide))
+
+    val next = Neg(Forall(Lambda(Var("X"), E, Var("X",E))))
+    println(higherOrderProver(next))
+
 
   }
 
