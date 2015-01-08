@@ -1440,6 +1440,8 @@ object LambdaManipulations {
     result
   }
 
+  /*******************************************************************************************************************************/
+  /* ASSIGNMENT 7 - starts here */
 
 
   /**
@@ -1727,15 +1729,6 @@ object LambdaManipulations {
                   }
                   val binders = gbinding(Var(r.name, r.inftype), l.inftype, Nil)
 
-                  //for each binder recursively get the substitutions (binders) in lower level
-                  //apply the substitutions to the binder from which they were generated
-                  //check if we HAVE TO unify other pairs, if not return the substitutions(binders) up in the tree
-                  //the reason I am using a list of lists is that one binder can have multiple substitutions to be made in order to solve it
-                  //in other words in that binder we generated more than one variable
-
-
-                  //if there are no binders that can be generated then it can't be unified. return null for failure
-                  // we don't care if there is something in the rest because if there is, it is an AND branch.
 
                   if (binders == null || binders.size == 0) {
                     null
@@ -1781,6 +1774,8 @@ object LambdaManipulations {
         case (left, right: Apply) :: rest => {
           SIM((right, left) :: rest, areWeDone, binderacc.distinct, isRecursingBack)
         }
+
+          //NEW CASE.
         case (left : Equal, right : Equal) :: rest =>{
           val first = SIM(List(left.l -> right.l), 0, binderacc, isRecursingBack)
 
@@ -1820,7 +1815,11 @@ object LambdaManipulations {
 
     }
 
-
+    /**
+     *
+     * @param head
+     * @return k=negation for primitive substitutions
+     */
     def generateNegation(head : Var) : List[Formula] = {
       val binder: List[Formula] = gbinding(head, getReturnType(head.tpe), Nil)
 
@@ -1875,6 +1874,15 @@ object LambdaManipulations {
       case _ => None
     }
 
+    /**
+     * This function will produce the branches, it is separated from the unification procedure. One benefit that we get for free is that
+     * the skolems that are produced here and from SIM rules are different therefore checking for saturated branches doesn't change in HOU procedure.
+     *
+     * @param expr - expr which is being considered in the tableau
+     * @param acc - the accumulated terms
+     * @param primitives - true if primitives have been generated on that branch
+     * @return each list has all the elements corresponding in one branch. We can try to cut by pairing any two in the same list.
+     */
     def produce_pairs(expr : (Formula,Boolean), acc : List[(Formula,Boolean)], primitives : Boolean = false) : List[List[(Formula,Boolean)]] = {
       expr match{
         case (Forall(lambda),bool) =>{
@@ -1945,6 +1953,14 @@ object LambdaManipulations {
     }
 
 
+    /**
+     * Tries to cut by unifying elements in the same list (which means in the same branch).
+     *
+     * @param branches all the possible branches
+     * @param substitutions substitutions from another branch to be applied to the current one - the unified variables
+     * @param isRecursingBack - true if we're recursing back because of T_REC rule.
+     * @return true if we can close every branch
+     */
     def cut_branches(branches : List[List[(Formula,Boolean)]], substitutions : List[(Var,Formula)], isRecursingBack : Boolean) : Boolean = {
       branches match{
         case head::tl => {
@@ -1986,9 +2002,9 @@ object LambdaManipulations {
 
     pairs = add_axiom(produce_pairs(axiom1 -> false, Nil), pairs)
     pairs = add_axiom(produce_pairs(axiom2 -> true, Nil), pairs)
-//    we can add other axioms as necessary (or all the ext. axioms), they need to be hardcoded here and added in this fashion
+    //all the axioms should be added this way, I am only including the ones I need. The axioms need to be hardcoded ofc.
 
-//    println(pairs)
+//    println(pairs)  // NOTE: REMOVE THE COMMENT TO SEE THE FLOW.
     cut_branches(pairs, Nil, false)
 
   }
@@ -2011,9 +2027,22 @@ object LambdaManipulations {
     //primitive subs test
     val next = Neg(Forall(Lambda(Var("X", E), E, Var("X",E))))
     println(higherOrderProver(next))
-
-
   }
+
+
+  /*README
+  If you want to see the flow uncomment the println from that shows the pairs (it's marked with NOTE), this will show all the branches.
+  For the unifications, uncomment the top println in function named SIM.
+
+  For your convenience I have marked from where you need to check assignment 7. There are some parts that changed even above that
+  (like adding Equal, Forall, Exists, Conj..) if you want to check them.
+
+  I am also assuming that we only have quantiiers Forall, as in the tableau in the slides, otherwise Exists can be easily translated.
+  Same for Conj and Disj.
+  Negation is there, ofc.
+
+   */
+
 
 }
 
